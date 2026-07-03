@@ -1,20 +1,17 @@
-let _accessToken: string | null = null;
+const TOKEN_KEY = 'dev_access_token';
 
 export function setAccessToken(token: string): void {
-  _accessToken = token;
+  sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export function getAccessToken(): string | null {
-  return _accessToken;
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function clearTokens(): void {
-  _accessToken = null;
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
-// Decode JWT payload to read role for client-side routing ONLY.
-// Never trust this for anything security-sensitive — the server re-verifies
-// on every request (ROLE-02).
 export function decodeRole(token: string): string {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));

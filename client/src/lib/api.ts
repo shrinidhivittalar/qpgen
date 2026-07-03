@@ -29,8 +29,11 @@ export async function apiFetch(
 ): Promise<Response> {
   const token = getAccessToken();
 
+  // Don't set Content-Type for FormData — the browser must set it with the
+  // multipart boundary. Forcing application/json breaks multer on the server.
+  const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> | undefined),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };

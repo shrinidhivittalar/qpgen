@@ -18,7 +18,7 @@ const router = Router();
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
-  skip: () => process.env.NODE_ENV === 'test',
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },

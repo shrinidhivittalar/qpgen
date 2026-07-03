@@ -2,13 +2,19 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import { beforeAll, afterAll, beforeEach } from 'vitest';
 
+// Set env vars at top-level so they are in place before any test-file module
+// imports are evaluated (module-level consts in source.ts / generator.ts read
+// these at load time, before beforeAll() ever runs).
+process.env.NODE_ENV           = 'test';
+process.env.JWT_ACCESS_SECRET  = 'test-access-secret-for-unit-tests-only-min-32-chars!';
+process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-for-unit-tests-only-min-32-chars!';
+process.env.CLIENT_URL         = 'http://localhost:5173';
+process.env.MAX_PDF_SIZE_MB    = '1';   // 1 MB limit so TC-SRC-03 only needs ~1 MB test buffer
+process.env.GROQ_API_KEY       = 'test-groq-key-not-used-in-tests';
+
 let mongod: MongoMemoryServer;
 
 beforeAll(async () => {
-  process.env.NODE_ENV = 'test';
-  process.env.JWT_ACCESS_SECRET  = 'test-access-secret-for-unit-tests-only-min-32-chars!';
-  process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-for-unit-tests-only-min-32-chars!';
-  process.env.CLIENT_URL = 'http://localhost:5173';
 
   try {
     mongod = await MongoMemoryServer.create();

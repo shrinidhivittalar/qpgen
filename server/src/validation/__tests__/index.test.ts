@@ -91,7 +91,7 @@ describe('validateQuestionBlock', () => {
 describe('validateExportSet', () => {
   it('throws ValidationError when no blocks have status "success"', () => {
     expect(() => validateExportSet([
-      { questionType: 'fillInBlanks', questions: [], status: 'failed' },
+      { questionType: 'fillInBlanks', questions: [], totalMarks: 0, status: 'failed' },
     ])).toThrow(ValidationError);
   });
 
@@ -101,7 +101,7 @@ describe('validateExportSet', () => {
 
   it('does not throw when at least one block has status "success"', () => {
     expect(() => validateExportSet([
-      { questionType: 'fillInBlanks', questions: [makeQuestion()], status: 'success' },
+      { questionType: 'fillInBlanks', questions: [makeQuestion()], totalMarks: 2, status: 'success' },
     ])).not.toThrow();
   });
 });

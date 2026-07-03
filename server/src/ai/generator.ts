@@ -1,5 +1,17 @@
+import Groq from 'groq-sdk';
 import { validateQuestionBlock, assignGlobalIds, QuestionBlock } from '../validation/index.js';
 import { QuestionType } from '../validation/schemaMap.js';
+import { buildPrompt } from './prompts.js';
+import { withRetry, withTimeout } from '../lib/retry.js';
+
+// Lazy singleton — constructed only when realGenerateFn is first called so
+// that importing this module in tests without GROQ_API_KEY does not throw.
+let _groq: Groq | null = null;
+function getGroq(): Groq {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
+const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 
 export type GenerateFn = (
   sourceText:       string,
@@ -65,6 +77,69 @@ function recalculateMarks(questions: object[], marksPerQuestion: number): object
   return questions.map(q => ({ ...q, marks: marksPerQuestion }));
 }
 
+// EC-GEN-08: strip markdown fences the model may add despite instructions,
+// then parse. Returns [] on any parse failure — runTypeLoop treats that as
+// 0 received and retries.
+export function parseAiJsonArray(raw: string): unknown[] {
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Shared Groq call — returns parsed questions and token count for this call.
+async function callGroq(
+  type:   QuestionType,
+  system: string,
+  user:   string,
+): Promise<{ questions: unknown[]; tokens: number }> {
+  const response = await withRetry(
+    () => withTimeout(
+      () => getGroq().chat.completions.create({
+        model:       GROQ_MODEL,
+        messages:    [
+          { role: 'system', content: system },
+          { role: 'user',   content: user },
+        ],
+        temperature: 0.7,
+      }),
+      30_000,
+      `groq:${type}`,
+    ),
+    3,
+  );
+  const tokens = response.usage?.total_tokens ?? 0;
+  const raw    = response.choices[0]?.message?.content ?? '';
+  return { questions: parseAiJsonArray(raw), tokens };
+}
+
+// Convenience export for one-off calls (no token tracking).
+export const realGenerateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint) => {
+  const { system, user } = buildPrompt(type, sourceText, count, dedupeHint);
+  const { questions } = await callGroq(type, system, user);
+  return questions;
+};
+
+// Factory for per-run token tracking. Each call to makeTrackedGenerateFn
+// returns a fresh counter; the route calls getTokensUsed() after generateSet
+// completes to obtain the total for that run.
+export function makeTrackedGenerateFn(): { generateFn: GenerateFn; getTokensUsed: () => number } {
+  let tokensUsed = 0;
+  const generateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint) => {
+    const { system, user } = buildPrompt(type, sourceText, count, dedupeHint);
+    const { questions, tokens } = await callGroq(type, system, user);
+    tokensUsed += tokens;
+    return questions;
+  };
+  return { generateFn, getTokensUsed: () => tokensUsed };
+}
+
 export interface GenerationError {
   type:      string;
   requested: number;
@@ -110,7 +185,7 @@ export async function generateSet(
     if (result.status === 'success') {
       blocks.push({
         questionType: type,
-        totalMarks:   result.questions.reduce((sum, q) => sum + (q as Record<string, unknown>).marks as number, 0),
+        totalMarks:   result.questions.reduce((sum, q) => sum + ((q as Record<string, unknown>).marks as number), 0),
         status:       'success',
         questions:    result.questions,
       });
