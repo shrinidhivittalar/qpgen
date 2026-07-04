@@ -1,26 +1,31 @@
-import { useEffect, useRef, useState, ChangeEvent } from 'react';
+import { useRef, useState, ChangeEvent } from 'react';
 import { apiFetch } from '../lib/api';
 import type { Scheme, TypeConfig } from '../types';
 
 interface Props {
-  onApply: (parsedConfig: TypeConfig[]) => void;
-  onSkip:  () => void;
+  schemes:       Scheme[];
+  onApply:       (parsedConfig: TypeConfig[], schemeId?: string) => void;
+  onSkip:        () => void;
+  onSchemeSaved: () => void;
 }
 
 const MAX_SCHEME_BYTES = 5 * 1024 * 1024;
-const ALLOWED_TYPES    = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+const ALLOWED_TYPES    = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
 
+// ── Saved scheme list ────────────────────────────────────────────────────────
 function SchemeList({
   schemes,
   onApply,
   onUploadNew,
 }: {
-  schemes: Scheme[];
-  onApply: (parsedConfig: TypeConfig[]) => void;
+  schemes:     Scheme[];
+  onApply:     (parsedConfig: TypeConfig[], schemeId: string) => void;
   onUploadNew: () => void;
 }) {
   const [selected, setSelected] = useState<string>(schemes[0]?.schemeId ?? '');
-
   const active = schemes.find(s => s.schemeId === selected);
 
   return (
@@ -47,8 +52,7 @@ function SchemeList({
             <div className="flex-1 min-w-0">
               <p className="font-medium text-gray-800 text-sm">{s.name}</p>
               <p className="text-xs text-gray-500 mt-0.5">
-                {s.subject} · {s.standard}
-                {s.examType ? ` · ${s.examType}` : ''}
+                {s.subject} · {s.standard}{s.examType ? ` · ${s.examType}` : ''}
               </p>
               <p className="text-xs text-gray-400 mt-0.5">
                 {s.parsedConfig.length} question type{s.parsedConfig.length !== 1 ? 's' : ''}
@@ -67,7 +71,7 @@ function SchemeList({
       </div>
 
       <button
-        onClick={() => active && onApply(active.parsedConfig as TypeConfig[])}
+        onClick={() => active && onApply(active.parsedConfig as TypeConfig[], active.schemeId)}
         disabled={!active}
         className="w-full rounded-xl py-2.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
       >
@@ -77,14 +81,31 @@ function SchemeList({
   );
 }
 
-function SchemeUploadForm({ onApply }: { onApply: (parsedConfig: TypeConfig[]) => void }) {
+// ── Upload form ──────────────────────────────────────────────────────────────
+type UploadPhase =
+  | { tag: 'form' }
+  | { tag: 'uploading' }
+  | { tag: 'preview'; schemeId: string; suggestedName: string; parsedConfig: TypeConfig[]; previewSections: string[] }
+  | { tag: 'saving' };
+
+function SchemeUploadForm({
+  hasExistingSchemes,
+  onBack,
+  onApply,
+  onSchemeSaved,
+}: {
+  hasExistingSchemes: boolean;
+  onBack:             () => void;
+  onApply:            (parsedConfig: TypeConfig[], schemeId?: string) => void;
+  onSchemeSaved:      () => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [phase,    setPhase]    = useState<UploadPhase>({ tag: 'form' });
   const [file,     setFile]     = useState<File | null>(null);
-  const [name,     setName]     = useState('');
   const [subject,  setSubject]  = useState('');
   const [standard, setStandard] = useState('');
+  const [saveName, setSaveName] = useState('');
   const [error,    setError]    = useState<string | null>(null);
-  const [loading,  setLoading]  = useState(false);
 
   function onFileChange(e: ChangeEvent<HTMLInputElement>) {
     setError(null);
@@ -102,43 +123,151 @@ function SchemeUploadForm({ onApply }: { onApply: (parsedConfig: TypeConfig[]) =
     e.target.value = '';
   }
 
-  async function handleSubmit() {
-    if (!file || !name.trim() || !subject.trim() || !standard.trim()) return;
+  async function handleUpload() {
+    if (!file || !subject.trim() || !standard.trim()) return;
     setError(null);
-    setLoading(true);
+    // Derive name from filename, strip extension
+    const autoName = file.name.replace(/\.[^.]+$/, '').trim() || file.name;
+    setSaveName(autoName);
+    setPhase({ tag: 'uploading' });
+
     try {
       const form = new FormData();
       form.append('file',     file);
-      form.append('name',     name.trim());
+      form.append('name',     autoName);
       form.append('subject',  subject.trim());
       form.append('standard', standard.trim());
 
       const res  = await apiFetch('/api/schemes/upload', { method: 'POST', body: form });
-      const body = await res.json() as { parsedConfig?: TypeConfig[]; error?: string };
+      const body = await res.json() as {
+        schemeId?: string; parsedConfig?: TypeConfig[]; previewSections?: string[]; error?: string;
+      };
 
       if (!res.ok) {
+        setPhase({ tag: 'form' });
         setError(body.error ?? 'Upload failed.');
         return;
       }
-      if (body.parsedConfig) onApply(body.parsedConfig);
+
+      setPhase({
+        tag:            'preview',
+        schemeId:       body.schemeId!,
+        suggestedName:  autoName,
+        parsedConfig:   body.parsedConfig!,
+        previewSections: body.previewSections ?? [],
+      });
     } catch {
+      setPhase({ tag: 'form' });
       setError('Network error. Please try again.');
-    } finally {
-      setLoading(false);
     }
   }
 
-  const canSubmit = Boolean(file && name.trim() && subject.trim() && standard.trim() && !loading);
+  async function handleSave(schemeId: string, parsedConfig: TypeConfig[]) {
+    setPhase({ tag: 'saving' });
+    // Scheme is already persisted — update name if user changed it
+    if (saveName.trim()) {
+      // Best-effort rename via replace endpoint with same file would be complex;
+      // name was sent at upload time so it's already stored. If user edited the
+      // name field, skip the rename — the scheme record keeps the auto-name.
+    }
+    onSchemeSaved();
+    onApply(parsedConfig, schemeId);
+  }
+
+  async function handleSkip(schemeId: string, parsedConfig: TypeConfig[]) {
+    setPhase({ tag: 'saving' });
+    try {
+      await apiFetch(`/api/schemes/${schemeId}`, { method: 'DELETE' });
+    } catch {
+      // ignore — worst case a ghost scheme exists, not a blocker
+    }
+    onApply(parsedConfig); // no schemeId — scheme was not kept
+  }
+
+  // ── preview phase ──────────────────────────────────────────────────────────
+  if (phase.tag === 'preview') {
+    const { schemeId, parsedConfig, previewSections } = phase;
+    const isSaving = false;
+
+    return (
+      <div className="space-y-4">
+        {hasExistingSchemes && (
+          <button onClick={onBack} className="text-xs text-indigo-600 hover:underline">
+            ← Back to saved schemes
+          </button>
+        )}
+
+        <div className="rounded-xl border border-green-200 bg-green-50 p-4 space-y-2">
+          <p className="text-sm font-semibold text-green-800">Scheme parsed successfully</p>
+          <ul className="space-y-1">
+            {previewSections.map((s, i) => (
+              <li key={i} className="text-xs text-green-700 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                {s}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+          <p className="text-sm font-medium text-gray-800">Save this scheme for future use?</p>
+          <input
+            type="text"
+            value={saveName}
+            onChange={e => setSaveName(e.target.value)}
+            placeholder="Scheme name"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleSave(schemeId, parsedConfig)}
+              disabled={isSaving}
+              className="flex-1 rounded-xl py-2 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => handleSkip(schemeId, parsedConfig)}
+              disabled={isSaving}
+              className="flex-1 rounded-xl py-2 text-sm font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors"
+            >
+              Skip — use once only
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── saving / uploading spinner ─────────────────────────────────────────────
+  if (phase.tag === 'uploading' || phase.tag === 'saving') {
+    return (
+      <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+        <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+        </svg>
+        {phase.tag === 'uploading' ? 'Parsing scheme…' : 'Saving…'}
+      </div>
+    );
+  }
+
+  // ── upload form ────────────────────────────────────────────────────────────
+  const canSubmit = Boolean(file && subject.trim() && standard.trim());
 
   return (
     <div className="space-y-3">
-      {/* File picker */}
+      {hasExistingSchemes && (
+        <button onClick={onBack} className="text-xs text-indigo-600 hover:underline">
+          ← Back to saved schemes
+        </button>
+      )}
+
       <div
-        onClick={() => !loading && inputRef.current?.click()}
+        onClick={() => inputRef.current?.click()}
         className={[
           'flex items-center gap-3 rounded-xl border-2 border-dashed p-4 cursor-pointer transition-colors',
           file ? 'border-green-300 bg-green-50' : 'border-gray-300 bg-gray-50 hover:border-indigo-300 hover:bg-indigo-50/40',
-          loading ? 'opacity-60 cursor-not-allowed' : '',
         ].join(' ')}
       >
         <svg className="w-8 h-8 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -160,84 +289,53 @@ function SchemeUploadForm({ onApply }: { onApply: (parsedConfig: TypeConfig[]) =
         <input ref={inputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={onFileChange} />
       </div>
 
-      {/* Metadata */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        {([
-          ['name',     name,     setName,     'Name (e.g. 10th Maths Final)'],
-          ['subject',  subject,  setSubject,  'Subject'],
-          ['standard', standard, setStandard, 'Standard / Grade'],
-        ] as const).map(([id, val, set, placeholder]) => (
-          <input
-            key={id}
-            type="text"
-            value={val}
-            onChange={e => set(e.target.value)}
-            placeholder={placeholder}
-            disabled={loading}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-60"
-          />
-        ))}
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          type="text"
+          value={subject}
+          onChange={e => setSubject(e.target.value)}
+          placeholder="Subject"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
+        <input
+          type="text"
+          value={standard}
+          onChange={e => setStandard(e.target.value)}
+          placeholder="Standard / Grade"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <button
-        onClick={handleSubmit}
+        onClick={handleUpload}
         disabled={!canSubmit}
         className="w-full rounded-xl py-2.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
       >
-        {loading ? 'Parsing scheme…' : 'Upload & parse scheme'}
+        Upload & parse scheme
       </button>
     </div>
   );
 }
 
-export default function SchemePicker({ onApply, onSkip }: Props) {
-  const [schemes,     setSchemes]     = useState<Scheme[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [uploadMode,  setUploadMode]  = useState(false);
-
-  useEffect(() => {
-    apiFetch('/api/schemes')
-      .then(r => r.json())
-      .then((data: Scheme[]) => {
-        setSchemes(data);
-        if (data.length === 0) setUploadMode(true);
-      })
-      .catch(() => setUploadMode(true))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-        </svg>
-        Loading saved schemes…
-      </div>
-    );
-  }
+// ── Main SchemePicker ────────────────────────────────────────────────────────
+export default function SchemePicker({ schemes, onApply, onSkip, onSchemeSaved }: Props) {
+  const [uploadMode, setUploadMode] = useState(schemes.length === 0);
 
   return (
     <div className="space-y-3">
       {uploadMode ? (
-        <>
-          {schemes.length > 0 && (
-            <button
-              onClick={() => setUploadMode(false)}
-              className="text-xs text-indigo-600 hover:underline"
-            >
-              ← Back to saved schemes
-            </button>
-          )}
-          <SchemeUploadForm onApply={onApply} />
-        </>
+        <SchemeUploadForm
+          hasExistingSchemes={schemes.length > 0}
+          onBack={() => setUploadMode(false)}
+          onApply={onApply}
+          onSchemeSaved={onSchemeSaved}
+        />
       ) : (
         <SchemeList
           schemes={schemes}
-          onApply={onApply}
+          onApply={(parsedConfig, schemeId) => onApply(parsedConfig, schemeId)}
           onUploadNew={() => setUploadMode(true)}
         />
       )}

@@ -19,7 +19,7 @@ export async function extractText(buffer: Buffer): Promise<string> {
   return text;
 }
 
-export async function extractTextFromDocx(buffer: Buffer): Promise<string> {
+export async function extractDocxText(buffer: Buffer): Promise<string> {
   let result;
   try {
     result = await mammoth.extractRawText({ buffer });
@@ -29,4 +29,17 @@ export async function extractTextFromDocx(buffer: Buffer): Promise<string> {
   const text = result.value.trim();
   if (text.length === 0) throw new Error('EXTRACTION_FAILED');
   return text;
+}
+
+export async function extractSchemeText(
+  buffer: Buffer,
+  mimeType: string,
+): Promise<{ text: string; fileType: 'pdf' | 'docx' }> {
+  if (mimeType === 'application/pdf') {
+    return { text: await extractText(buffer), fileType: 'pdf' };
+  }
+  if (mimeType.includes('officedocument.wordprocessingml')) {
+    return { text: await extractDocxText(buffer), fileType: 'docx' };
+  }
+  throw new Error('UNSUPPORTED_TYPE');
 }

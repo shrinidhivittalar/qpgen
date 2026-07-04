@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireRole } from '../middleware/requireRole.js';
 import { QuestionSet } from '../models/QuestionSet.js';
 import { GenerationRun } from '../models/GenerationRun.js';
+import Scheme from '../models/Scheme.js';
 import { generateSet, makeTrackedGenerateFn, TypeConfig } from '../ai/generator.js';
 import { checkAndReserveBudget } from '../services/tokenBudget.js';
 import { logger } from '../lib/logger.js';
@@ -23,6 +24,7 @@ const TypeConfigItemSchema = z.object({
 
 const GenerateBodySchema = z.object({
   typeConfig: z.array(TypeConfigItemSchema).min(1),
+  schemeId:   z.string().optional(),
 });
 
 // POST /api/sets/:id/generate
@@ -90,6 +92,19 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
   const tokensUsed  = getTokensUsed();
 
   // 5. Persist results
+  // Resolve optional schemeId — silently ignore if invalid or not owned (SCH-12)
+  const { schemeId } = bodyResult.data;
+  if (schemeId) {
+    try {
+      const scheme = await Scheme.findById(schemeId).lean();
+      if (scheme && scheme.teacherId.toString() === userId) {
+        set.schemeId = scheme._id as any;
+      }
+    } catch {
+      // invalid ObjectId or DB error — ignore, schemeId stays null
+    }
+  }
+
   set.questionBlocks   = blocks as any;
   set.generationErrors = errors as any;
   set.typeConfig       = activeTypeConfig as any;

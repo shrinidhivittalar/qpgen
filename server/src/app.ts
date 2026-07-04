@@ -44,7 +44,7 @@ app.use('/api/health', healthRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/source',  requireAuth, requireRole('teacher'), sourceRouter);
 app.use('/api/sets',    apiLimiter, requireAuth, setsRouter);
-app.use('/api/schemes', requireAuth, schemesRouter);
+app.use('/api/schemes', apiLimiter, schemesRouter);
 
 // Catch-all error handler — logs in tests, prevents bare "Internal Server Error" HTML
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
