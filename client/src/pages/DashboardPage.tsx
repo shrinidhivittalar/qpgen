@@ -11,8 +11,11 @@ import type { Scheme, TypeConfig } from '../types';
 
 export default function DashboardPage() {
   const { user, logout } = useAuth();
-  const { state, uploadFile, setTypeConfig, applyScheme, generate } = useGeneration();
-  const { setId, fileName, wordCount, typeConfig, results, isGenerating, exportError } = state;
+  const { state, uploadFile, setTypeConfig, setIntent, applyScheme, generate } = useGeneration();
+  const {
+    setId, fileName, wordCount, typeConfig, results, isGenerating, exportError,
+    difficultyDefault, tone, bankId,
+  } = state;
 
   // ── Scheme step state ──────────────────────────────────────────────────────
   const [schemeStep, setSchemeStep] = useState<'pending' | 'done'>('pending');
@@ -167,7 +170,15 @@ export default function DashboardPage() {
                   Change scheme
                 </button>
               </div>
-              <TypeConfigurator config={typeConfig} onChange={setTypeConfig} disabled={isGenerating} />
+              <TypeConfigurator
+                config={typeConfig}
+                onChange={setTypeConfig}
+                difficultyDefault={difficultyDefault}
+                tone={tone}
+                bankId={bankId}
+                onIntentChange={setIntent}
+                disabled={isGenerating}
+              />
             </section>
           )}
 
@@ -199,7 +210,13 @@ export default function DashboardPage() {
               <h2 className="text-base font-semibold text-gray-800">
                 <span className="text-indigo-500 mr-2">4</span>Generation status
               </h2>
-              <GenerationProgress typeConfig={typeConfig} results={results} isGenerating={isGenerating} />
+              <GenerationProgress
+                typeConfig={typeConfig}
+                results={results}
+                isGenerating={isGenerating}
+                difficultyDefault={difficultyDefault}
+                tone={tone}
+              />
             </section>
           )}
 

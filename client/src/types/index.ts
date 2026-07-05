@@ -45,10 +45,19 @@ export const ALL_QUESTION_TYPES: QuestionType[] = [
   'matchTheFollowing', 'reordering', 'sorting', 'trueFalse',
 ];
 
+export type DifficultyLevel = 'easy' | 'moderate' | 'hard';
+export type ToneOption     = 'formal-board-exam' | 'neutral' | 'conversational';
+
 export interface TypeConfig {
   type:             QuestionType;
   count:            number;
   marksPerQuestion: number;
+  difficulty?:      DifficultyLevel;
+}
+
+export interface ReferenceBank {
+  id:   string;
+  name: string;
 }
 
 export interface Scheme {

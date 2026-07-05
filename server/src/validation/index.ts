@@ -1,4 +1,5 @@
 import { schemaMap, QuestionType } from './schemaMap.js';
+import { classifyDifficulty } from '../ai/difficultyClassifier.js';
 
 export { QuestionType };
 
@@ -16,21 +17,50 @@ export class ValidationError extends Error {
   }
 }
 
+function extractPrimaryText(_type: QuestionType, data: any): string {
+  return (data.question?.text ?? '') as string;
+}
+
+function isTooSimilar(a: string, b: string): boolean {
+  const tokenize = (s: string) => new Set(s.toLowerCase().split(/\W+/).filter(w => w.length > 2));
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 || setB.size === 0) return false;
+  const intersection = [...setA].filter(w => setB.has(w)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return intersection / union > 0.8;
+}
+
+type DifficultyLevel = 'easy' | 'moderate' | 'hard';
+
 // GEN-16, EC-GEN-10: each question validated independently — one bad item never
 // invalidates the whole batch. Invalid questions are dropped and counted for
 // shortfall math in the retry loop.
-export function validateQuestionBlock(
+export async function validateQuestionBlock(
   type: QuestionType,
   rawQuestions: unknown[],
-): { valid: object[]; invalidCount: number } {
+  exemplarTexts: string[] = [],
+  requestedDifficulty?: DifficultyLevel,
+): Promise<{ valid: object[]; invalidCount: number }> {
   const schema = schemaMap[type];
   const valid: object[] = [];
   let invalidCount = 0;
 
   for (const q of rawQuestions) {
     const result = schema.safeParse(q);
-    if (result.success) valid.push(result.data as object);
-    else invalidCount++;
+    if (!result.success) { invalidCount++; continue; }
+
+    const primaryText = extractPrimaryText(type, result.data);
+
+    const tooSimilar = exemplarTexts.some(ex => isTooSimilar(primaryText, ex));
+    if (tooSimilar) { invalidCount++; continue; }
+
+    if (requestedDifficulty) {
+      const detected = await classifyDifficulty(primaryText, type, result.data);
+      if (detected !== requestedDifficulty) { invalidCount++; continue; }
+    }
+
+    valid.push(result.data);
   }
 
   return { valid, invalidCount };

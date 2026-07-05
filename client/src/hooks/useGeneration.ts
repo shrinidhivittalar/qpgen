@@ -1,17 +1,20 @@
 import { useState, useCallback } from 'react';
 import { apiFetch } from '../lib/api';
-import type { TypeConfig, TypeResult, QuestionType } from '../types';
+import type { TypeConfig, TypeResult, QuestionType, DifficultyLevel, ToneOption } from '../types';
 
 export interface GenerationState {
-  setId:          string | null;
-  fileName:       string | null;
-  wordCount:      number | null;
-  previewText:    string | null;
-  typeConfig:     TypeConfig[];
-  activeSchemeId: string | null;
-  results:        Record<QuestionType, TypeResult>;
-  isGenerating:   boolean;
-  exportError:    string | null;
+  setId:             string | null;
+  fileName:          string | null;
+  wordCount:         number | null;
+  previewText:       string | null;
+  typeConfig:        TypeConfig[];
+  activeSchemeId:    string | null;
+  difficultyDefault: DifficultyLevel;
+  tone:              ToneOption;
+  bankId:            string | null;
+  results:           Record<QuestionType, TypeResult>;
+  isGenerating:      boolean;
+  exportError:       string | null;
 }
 
 const emptyResults = (): Record<QuestionType, TypeResult> => ({
@@ -26,15 +29,18 @@ const emptyResults = (): Record<QuestionType, TypeResult> => ({
 
 export function useGeneration() {
   const [state, setState] = useState<GenerationState>({
-    setId:          null,
-    fileName:       null,
-    wordCount:      null,
-    previewText:    null,
-    typeConfig:     [],
-    activeSchemeId: null,
-    results:        emptyResults(),
-    isGenerating:   false,
-    exportError:    null,
+    setId:             null,
+    fileName:          null,
+    wordCount:         null,
+    previewText:       null,
+    typeConfig:        [],
+    activeSchemeId:    null,
+    difficultyDefault: 'moderate',
+    tone:              'formal-board-exam',
+    bankId:            null,
+    results:           emptyResults(),
+    isGenerating:      false,
+    exportError:       null,
   });
 
   const uploadFile = useCallback(async (file: File): Promise<void> => {
@@ -81,6 +87,12 @@ export function useGeneration() {
     setState(s => ({ ...s, typeConfig: Array.from(merged.values()), activeSchemeId: schemeId }));
   }, []);
 
+  const setIntent = useCallback((
+    updates: Partial<{ difficultyDefault: DifficultyLevel; tone: ToneOption; bankId: string | null }>,
+  ) => {
+    setState(s => ({ ...s, ...updates }));
+  }, []);
+
   const generate = useCallback(async (): Promise<void> => {
     setState(s => {
       const results = { ...s.results };
@@ -91,14 +103,17 @@ export function useGeneration() {
     });
 
     try {
-      const { setId, typeConfig, activeSchemeId } = state;
+      const { setId, typeConfig, activeSchemeId, difficultyDefault, tone, bankId } = state;
 
       const res = await apiFetch(`/api/sets/${setId}/generate`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           typeConfig,
+          difficultyDefault,
+          tone,
           ...(activeSchemeId ? { schemeId: activeSchemeId } : {}),
+          ...(bankId         ? { bankId }                  : {}),
         }),
       });
 
@@ -131,21 +146,24 @@ export function useGeneration() {
         return { ...s, isGenerating: false, exportError: err instanceof Error ? err.message : 'Generation failed.' };
       });
     }
-  }, [state.setId, state.typeConfig, state.activeSchemeId]);
+  }, [state.setId, state.typeConfig, state.activeSchemeId, state.difficultyDefault, state.tone, state.bankId]);
 
   const reset = useCallback(() => {
     setState({
-      setId:          null,
-      fileName:       null,
-      wordCount:      null,
-      previewText:    null,
-      typeConfig:     [],
-      activeSchemeId: null,
-      results:        emptyResults(),
-      isGenerating:   false,
-      exportError:    null,
+      setId:             null,
+      fileName:          null,
+      wordCount:         null,
+      previewText:       null,
+      typeConfig:        [],
+      activeSchemeId:    null,
+      difficultyDefault: 'moderate',
+      tone:              'formal-board-exam',
+      bankId:            null,
+      results:           emptyResults(),
+      isGenerating:      false,
+      exportError:       null,
     });
   }, []);
 
-  return { state, uploadFile, setTypeConfig, applyScheme, generate, reset };
+  return { state, uploadFile, setTypeConfig, setIntent, applyScheme, generate, reset };
 }

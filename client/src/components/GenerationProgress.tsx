@@ -1,10 +1,24 @@
-import { QUESTION_TYPE_LABELS, QuestionType, TypeConfig, TypeResult } from '../types';
+import { QUESTION_TYPE_LABELS, QuestionType, TypeConfig, TypeResult, DifficultyLevel, ToneOption } from '../types';
 
 interface Props {
-  typeConfig:   TypeConfig[];
-  results:      Record<QuestionType, TypeResult>;
-  isGenerating: boolean;
+  typeConfig:         TypeConfig[];
+  results:            Record<QuestionType, TypeResult>;
+  isGenerating:       boolean;
+  difficultyDefault?: DifficultyLevel;
+  tone?:              ToneOption;
 }
+
+const DIFFICULTY_LABEL: Record<DifficultyLevel, string> = {
+  easy:     'Easy',
+  moderate: 'Moderate',
+  hard:     'Hard',
+};
+
+const TONE_LABEL: Record<ToneOption, string> = {
+  'formal-board-exam': 'board-exam style',
+  'neutral':           'neutral tone',
+  'conversational':    'conversational tone',
+};
 
 function StatusIcon({ status }: { status: TypeResult['status'] }) {
   if (status === 'generating') {
@@ -24,18 +38,29 @@ function StatusIcon({ status }: { status: TypeResult['status'] }) {
   return null;
 }
 
-export default function GenerationProgress({ typeConfig, results, isGenerating }: Props) {
+export default function GenerationProgress({
+  typeConfig, results, isGenerating, difficultyDefault, tone,
+}: Props) {
   const activeTypes = typeConfig.filter(tc => tc.count > 0);
 
   if (!isGenerating && activeTypes.every(tc => results[tc.type].status === 'idle')) {
     return null;
   }
 
+  const subtitle = isGenerating && difficultyDefault && tone
+    ? `Matching ${DIFFICULTY_LABEL[difficultyDefault]}-difficulty ${TONE_LABEL[tone]}`
+    : null;
+
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-gray-700">
-        {isGenerating ? 'Generating questions…' : 'Generation complete'}
-      </p>
+      <div>
+        <p className="text-sm font-medium text-gray-700">
+          {isGenerating ? 'Generating questions…' : 'Generation complete'}
+        </p>
+        {subtitle && (
+          <p className="text-xs text-indigo-500 mt-0.5">{subtitle}</p>
+        )}
+      </div>
       {/* Known simplification: backend returns all results at once (not streamed).
           All cards show "Generating…" on submit, then all populate together.
           True per-type streaming (SSE/WebSocket) is out of scope. */}

@@ -31,7 +31,7 @@ async function runCheck(type: Parameters<typeof realGenerateFn>[1], count: numbe
   console.log(`[fixture saved] fixture_${type}.json`);
   console.log('[raw output]', rawStr.slice(0, 400), raw.length > 1 ? '...' : '');
 
-  const { valid, invalidCount } = validateQuestionBlock(type, raw);
+  const { valid, invalidCount } = await validateQuestionBlock(type, raw);
   console.log(`[validation] valid=${valid.length}  invalid=${invalidCount}`);
 
   if (invalidCount > 0) {

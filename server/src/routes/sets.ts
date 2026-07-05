@@ -8,6 +8,7 @@ import Scheme from '../models/Scheme.js';
 import { generateSet, makeTrackedGenerateFn, TypeConfig } from '../ai/generator.js';
 import { checkAndReserveBudget } from '../services/tokenBudget.js';
 import { logger } from '../lib/logger.js';
+import { DifficultyLevel, ToneOption } from '../validation/schemas/typeConfig.js';
 
 const router = Router();
 
@@ -20,11 +21,15 @@ const TypeConfigItemSchema = z.object({
   type:             z.string(),
   count:            z.number().int().min(0),
   marksPerQuestion: z.number().positive(),
+  difficulty:       DifficultyLevel.optional(),
 });
 
 const GenerateBodySchema = z.object({
-  typeConfig: z.array(TypeConfigItemSchema).min(1),
-  schemeId:   z.string().optional(),
+  typeConfig:        z.array(TypeConfigItemSchema).min(1),
+  schemeId:          z.string().optional(),
+  bankId:            z.string().optional(),
+  difficultyDefault: DifficultyLevel.optional(),
+  tone:              ToneOption.optional(),
 });
 
 // POST /api/sets/:id/generate
@@ -60,7 +65,15 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
   }
 
   // Filter zero-count entries, then check if anything remains (EC-GEN-02)
-  const activeTypeConfig = bodyResult.data.typeConfig.filter(tc => tc.count > 0) as TypeConfig[];
+  const { difficultyDefault, tone, bankId } = bodyResult.data;
+
+  // Resolve each type's effective difficulty before generation
+  const effectiveTypeConfig = bodyResult.data.typeConfig.map(tc => ({
+    ...tc,
+    difficulty: tc.difficulty ?? difficultyDefault ?? 'moderate',
+  }));
+
+  const activeTypeConfig = effectiveTypeConfig.filter(tc => tc.count > 0) as TypeConfig[];
   if (activeTypeConfig.length === 0) {
     res.status(400).json({ error: 'Select at least one question type with a count greater than 0.' });
     return;
@@ -80,7 +93,12 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
   let errors: Awaited<ReturnType<typeof generateSet>>['errors'];
 
   try {
-    ({ blocks, errors } = await generateSet(set.sourceText, activeTypeConfig, generateFn));
+    ({ blocks, errors } = await generateSet(set.sourceText, activeTypeConfig, generateFn, {
+      tone,
+      bankId,
+      teacherId:   userId,
+      subjectHint: set.department,
+    }));
   } catch {
     // generateSet uses allSettled internally and should not throw under normal
     // conditions; if it does (e.g. Groq client init failure), treat as 503.
@@ -104,6 +122,11 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
       // invalid ObjectId or DB error — ignore, schemeId stays null
     }
   }
+
+  // Audit metadata — silently stored regardless of bankId validity (Stage 3 will validate)
+  if (difficultyDefault) set.difficultyDefault = difficultyDefault as any;
+  if (tone)              set.tone              = tone as any;
+  if (bankId)            set.bankId            = bankId as any;
 
   set.questionBlocks   = blocks as any;
   set.generationErrors = errors as any;

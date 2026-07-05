@@ -13,12 +13,21 @@ function getGroq(): Groq {
 }
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 
+export interface GenerationContext {
+  difficulty?: string;
+  tone?:       string;
+  bankId?:     string;
+  teacherId?:  string;
+  subjectHint?: string;
+}
+
 export type GenerateFn = (
   sourceText:       string,
   type:             QuestionType,
   count:            number,
   marksPerQuestion: number,
   dedupeHint?:      string,
+  context?:         GenerationContext,
 ) => Promise<unknown[]>;
 
 export type RunTypeLoopResult =
@@ -33,6 +42,7 @@ export async function runTypeLoop(
   targetCount:      number,
   marksPerQuestion: number,
   generateFn:       GenerateFn,
+  context?:         GenerationContext,
 ): Promise<RunTypeLoopResult> {
   let collected: object[] = [];
 
@@ -47,13 +57,17 @@ export async function runTypeLoop(
         shortfall,
         marksPerQuestion,
         attempt > 1 ? 'Avoid duplicating previously generated questions.' : undefined,
+        context,
       );
     } catch {
       // EC-GEN-08: thrown error (network, invalid JSON) = 0 received this round
       raw = [];
     }
 
-    const { valid } = validateQuestionBlock(type, raw);
+    const { valid } = await validateQuestionBlock(
+      type, raw, [],
+      context?.difficulty as ('easy' | 'moderate' | 'hard') | undefined,
+    );
     collected = collected.concat(valid);
 
     if (collected.length >= targetCount) {
@@ -119,9 +133,20 @@ async function callGroq(
   return { questions: parseAiJsonArray(raw), tokens };
 }
 
+function resolvePromptArgs(context: GenerationContext | undefined) {
+  return {
+    teacherId:  context?.teacherId  ?? '',
+    difficulty: (context?.difficulty ?? 'moderate') as 'easy' | 'moderate' | 'hard',
+    tone:       (context?.tone       ?? 'formal-board-exam') as 'formal-board-exam' | 'neutral' | 'conversational',
+    bankId:     context?.bankId,
+    subjectHint: context?.subjectHint,
+  };
+}
+
 // Convenience export for one-off calls (no token tracking).
-export const realGenerateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint) => {
-  const { system, user } = buildPrompt(type, sourceText, count, dedupeHint);
+export const realGenerateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint, context) => {
+  const { teacherId, difficulty, tone, bankId, subjectHint } = resolvePromptArgs(context);
+  const { system, user } = await buildPrompt(type, sourceText, count, teacherId, difficulty, tone, bankId, subjectHint, dedupeHint);
   const { questions } = await callGroq(type, system, user);
   return questions;
 };
@@ -131,8 +156,9 @@ export const realGenerateFn: GenerateFn = async (sourceText, type, count, _marks
 // completes to obtain the total for that run.
 export function makeTrackedGenerateFn(): { generateFn: GenerateFn; getTokensUsed: () => number } {
   let tokensUsed = 0;
-  const generateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint) => {
-    const { system, user } = buildPrompt(type, sourceText, count, dedupeHint);
+  const generateFn: GenerateFn = async (sourceText, type, count, _marks, dedupeHint, context) => {
+    const { teacherId, difficulty, tone, bankId, subjectHint } = resolvePromptArgs(context);
+    const { system, user } = await buildPrompt(type, sourceText, count, teacherId, difficulty, tone, bankId, subjectHint, dedupeHint);
     const { questions, tokens } = await callGroq(type, system, user);
     tokensUsed += tokens;
     return questions;
@@ -151,6 +177,7 @@ export interface TypeConfig {
   type:             QuestionType;
   count:            number;
   marksPerQuestion: number;
+  difficulty?:      string;
 }
 
 // Note: if ALL counts are 0 the route layer should reject before calling
@@ -159,6 +186,7 @@ export async function generateSet(
   sourceText:  string,
   typeConfig:  TypeConfig[],
   generateFn:  GenerateFn,
+  context?:    Omit<GenerationContext, 'difficulty'>,
 ): Promise<{ blocks: QuestionBlock[]; errors: GenerationError[] }> {
   // GEN-09, EC-GEN-01: types with count 0 are silently skipped
   const activeTypes = typeConfig.filter(tc => tc.count > 0);
@@ -167,8 +195,10 @@ export async function generateSet(
   // cancels the others
   const settled = await Promise.allSettled(
     activeTypes.map(tc =>
-      runTypeLoop(sourceText, tc.type, tc.count, tc.marksPerQuestion, generateFn)
-        .then(result => ({ type: tc.type, result })),
+      runTypeLoop(
+        sourceText, tc.type, tc.count, tc.marksPerQuestion, generateFn,
+        { ...context, difficulty: tc.difficulty },
+      ).then(result => ({ type: tc.type, result })),
     ),
   );
 

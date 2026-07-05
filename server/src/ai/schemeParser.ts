@@ -49,12 +49,16 @@ RULES:
 Return ONLY a raw JSON array, no markdown fences, no explanation:
 [{ "type": "multipleChoice", "count": 20, "marksPerQuestion": 1 }, { "type": "fillInBlanks", "count": 5, "marksPerQuestion": 2 }]`;
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+let _groq: Groq | null = null;
+function getGroq(): Groq {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
 
 export async function parseScheme(rawText: string): Promise<TypeConfig[]> {
   const response = await withRetry(
     () => withTimeout(
-      () => groq.chat.completions.create({
+      () => getGroq().chat.completions.create({
         model:    process.env.GROQ_MODEL ?? 'llama-4-maverick-17b-128e-instruct',
         messages: [
           { role: 'system', content: SCHEME_PARSE_PROMPT },

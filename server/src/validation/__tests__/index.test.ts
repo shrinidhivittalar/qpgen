@@ -43,42 +43,42 @@ describe('assignGlobalIds', () => {
 // validateQuestionBlock
 // ────────────────────────────────────────────────────────────────────────────
 describe('validateQuestionBlock', () => {
-  it('returns valid.length === 6 and invalidCount === 2 when 2 of 8 questions have empty explanation (EC-GEN-10)', () => {
+  it('returns valid.length === 6 and invalidCount === 2 when 2 of 8 questions have empty explanation (EC-GEN-10)', async () => {
     const questions = [
       ...Array.from({ length: 6 }, () => makeQuestion()),
       makeQuestion({ explanation: '' }),
       makeQuestion({ explanation: '' }),
     ];
 
-    const { valid, invalidCount } = validateQuestionBlock('fillInBlanks', questions);
+    const { valid, invalidCount } = await validateQuestionBlock('fillInBlanks', questions);
 
     expect(valid).toHaveLength(6);
     expect(invalidCount).toBe(2);
   });
 
-  it('passes question with unknown extra field and strips it from the result (EC-GEN-09)', () => {
+  it('passes question with unknown extra field and strips it from the result (EC-GEN-09)', async () => {
     const raw = makeQuestion({ unknownAiField: 'should be stripped' });
-    const { valid, invalidCount } = validateQuestionBlock('fillInBlanks', [raw]);
+    const { valid, invalidCount } = await validateQuestionBlock('fillInBlanks', [raw]);
 
     expect(invalidCount).toBe(0);
     expect(valid).toHaveLength(1);
     expect((valid[0] as Record<string, unknown>).unknownAiField).toBeUndefined();
   });
 
-  it('returns all valid when every question is well-formed', () => {
+  it('returns all valid when every question is well-formed', async () => {
     const questions = Array.from({ length: 4 }, () => makeQuestion());
-    const { valid, invalidCount } = validateQuestionBlock('fillInBlanks', questions);
+    const { valid, invalidCount } = await validateQuestionBlock('fillInBlanks', questions);
 
     expect(valid).toHaveLength(4);
     expect(invalidCount).toBe(0);
   });
 
-  it('returns empty valid array when all questions are invalid', () => {
+  it('returns empty valid array when all questions are invalid', async () => {
     const questions = [
       makeQuestion({ explanation: '' }),
       makeQuestion({ marks: -1 }),
     ];
-    const { valid, invalidCount } = validateQuestionBlock('fillInBlanks', questions);
+    const { valid, invalidCount } = await validateQuestionBlock('fillInBlanks', questions);
 
     expect(valid).toHaveLength(0);
     expect(invalidCount).toBe(2);

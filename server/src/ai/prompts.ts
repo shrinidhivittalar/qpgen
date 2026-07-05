@@ -1,4 +1,6 @@
 import { QuestionType } from '../validation/schemaMap.js';
+import { DIFFICULTY_INSTRUCTIONS } from './difficulty.js';
+import { getExemplars } from './exemplarRetrieval.js';
 
 // One JSON example per type — derived directly from the Zod schemas so there
 // is zero drift between what the prompt asks for and what Zod validates.
@@ -88,26 +90,44 @@ const SCHEMA_TEXT: Record<QuestionType, string> = {
 ]`,
 };
 
-export function buildPrompt(
+const TONE_INSTRUCTION: Record<string, string> = {
+  'formal-board-exam': 'Use the formal, precise register of a national board examination paper — no casual phrasing, no contractions.',
+  'neutral':           'Use clear, plain instructional language.',
+  'conversational':    'Use an approachable, conversational tone while staying precise.',
+};
+
+export async function buildPrompt(
   type: QuestionType,
   sourceText: string,
   count: number,
+  teacherId: string,
+  difficulty: 'easy' | 'moderate' | 'hard',
+  tone: 'formal-board-exam' | 'neutral' | 'conversational',
+  bankId?: string,
+  subjectHint?: string,
   dedupeHint?: string,
-): { system: string; user: string } {
+): Promise<{ system: string; user: string }> {
   const schemaBlock = SCHEMA_TEXT[type];
+  const exemplars = await getExemplars(teacherId, type, { bankId, subjectHint });
 
-  const system = `You generate ${type} questions strictly matching this JSON schema:
+  const toneInstruction = TONE_INSTRUCTION[tone];
+  const difficultyInstruction = DIFFICULTY_INSTRUCTIONS[difficulty];
+
+  const exemplarBlock = exemplars.length > 0
+    ? `\n\nHere are example questions matching the required style and difficulty:\n${exemplars.map((e, i) => `${i + 1}. ${e}`).join('\n')}\nMatch this style exactly.`
+    : '';
+
+  const system = `You generate ${type} questions strictly matching this schema:
 ${schemaBlock}
-
-Generate exactly ${count} question${count === 1 ? '' : 's'}.
-Every question MUST include a non-empty "explanation" field that justifies the correct answer.
-Return ONLY the fields shown above — no extra fields whatsoever.
+Generate exactly ${count} question${count === 1 ? '' : 's'} from the source material below.
+${toneInstruction}
+${difficultyInstruction}
+Every question must include a non-empty "explanation" field that justifies the correct answer. Return ONLY the fields shown in the schema — no extra fields whatsoever.${exemplarBlock}
 Return a raw JSON array only. No markdown formatting, no code fences, no commentary before or after the array.`;
 
-  let userText = `Source material:\n${sourceText}`;
-  if (dedupeHint) {
-    userText += `\n\n${dedupeHint} Generate ${count} NEW distinct question${count === 1 ? '' : 's'}.`;
-  }
+  const user = dedupeHint
+    ? `Source material:\n${sourceText}\n\n${dedupeHint} Generate ${count} NEW distinct question${count === 1 ? '' : 's'}.`
+    : `Source material:\n${sourceText}`;
 
-  return { system, user: userText };
+  return { system, user };
 }
