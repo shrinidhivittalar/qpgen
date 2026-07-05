@@ -1,5 +1,6 @@
 import { schemaMap, QuestionType } from './schemaMap.js';
 import { classifyDifficulty } from '../ai/difficultyClassifier.js';
+import { Strategy } from '../ai/strategyPicker.js';
 
 export { QuestionType };
 
@@ -21,14 +22,14 @@ function extractPrimaryText(_type: QuestionType, data: any): string {
   return (data.question?.text ?? '') as string;
 }
 
-function isTooSimilar(a: string, b: string): boolean {
+function isTooSimilar(a: string, b: string, threshold = 0.8): boolean {
   const tokenize = (s: string) => new Set(s.toLowerCase().split(/\W+/).filter(w => w.length > 2));
   const setA = tokenize(a);
   const setB = tokenize(b);
   if (setA.size === 0 || setB.size === 0) return false;
   const intersection = [...setA].filter(w => setB.has(w)).length;
   const union = new Set([...setA, ...setB]).size;
-  return intersection / union > 0.8;
+  return intersection / union > threshold;
 }
 
 type DifficultyLevel = 'easy' | 'moderate' | 'hard';
@@ -37,10 +38,11 @@ type DifficultyLevel = 'easy' | 'moderate' | 'hard';
 // invalidates the whole batch. Invalid questions are dropped and counted for
 // shortfall math in the retry loop.
 export async function validateQuestionBlock(
-  type: QuestionType,
-  rawQuestions: unknown[],
-  exemplarTexts: string[] = [],
+  type:              QuestionType,
+  rawQuestions:      unknown[],
+  exemplarTexts:     string[] = [],
   requestedDifficulty?: DifficultyLevel,
+  strategyContext?:  { strategy: Strategy; baseQuestion: string | null },
 ): Promise<{ valid: object[]; invalidCount: number }> {
   const schema = schemaMap[type];
   const valid: object[] = [];
@@ -52,8 +54,20 @@ export async function validateQuestionBlock(
 
     const primaryText = extractPrimaryText(type, result.data);
 
-    const tooSimilar = exemplarTexts.some(ex => isTooSimilar(primaryText, ex));
-    if (tooSimilar) { invalidCount++; continue; }
+    if (strategyContext?.strategy === 'rephrase' || strategyContext?.strategy === 'variant') {
+      // Being similar to the base is expected — only reject if the model
+      // returned an essentially verbatim copy (threshold raised to 0.92).
+      if (strategyContext.baseQuestion && isTooSimilar(primaryText, strategyContext.baseQuestion, 0.92)) {
+        invalidCount++; continue;
+      }
+    } else if (strategyContext?.strategy === 'reuse') {
+      // Intentionally identical — skip similarity checking entirely.
+    } else {
+      // 'fresh' or no strategy context: original behaviour — reject if too
+      // similar to any style exemplar using the standard 0.8 threshold.
+      const tooSimilar = exemplarTexts.some(ex => isTooSimilar(primaryText, ex));
+      if (tooSimilar) { invalidCount++; continue; }
+    }
 
     if (requestedDifficulty) {
       const detected = await classifyDifficulty(primaryText, type, result.data);

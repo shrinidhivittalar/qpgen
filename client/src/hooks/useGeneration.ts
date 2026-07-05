@@ -93,7 +93,7 @@ export function useGeneration() {
     setState(s => ({ ...s, ...updates }));
   }, []);
 
-  const generate = useCallback(async (): Promise<void> => {
+  const generate = useCallback(async (chapterIds: string[] = []): Promise<void> => {
     setState(s => {
       const results = { ...s.results };
       for (const tc of s.typeConfig) {
@@ -112,8 +112,9 @@ export function useGeneration() {
           typeConfig,
           difficultyDefault,
           tone,
-          ...(activeSchemeId ? { schemeId: activeSchemeId } : {}),
-          ...(bankId         ? { bankId }                  : {}),
+          ...(activeSchemeId          ? { schemeId: activeSchemeId } : {}),
+          ...(bankId                  ? { bankId }                   : {}),
+          ...(chapterIds.length > 0   ? { chapterIds }               : {}),
         }),
       });
 

@@ -3,6 +3,9 @@ import { validateQuestionBlock, assignGlobalIds, QuestionBlock } from '../valida
 import { QuestionType } from '../validation/schemaMap.js';
 import { buildPrompt } from './prompts.js';
 import { withRetry, withTimeout } from '../lib/retry.js';
+import { allocateSlots, ChapterInput } from './slotAllocator.js';
+import { pickStrategy, Strategy } from './strategyPicker.js';
+import { createLimiter } from '../lib/concurrency.js';
 
 // Lazy singleton — constructed only when realGenerateFn is first called so
 // that importing this module in tests without GROQ_API_KEY does not throw.
@@ -13,12 +16,15 @@ function getGroq(): Groq {
 }
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 
+type ToneOption = 'formal-board-exam' | 'neutral' | 'conversational';
+
 export interface GenerationContext {
-  difficulty?: string;
-  tone?:       string;
-  bankId?:     string;
-  teacherId?:  string;
-  subjectHint?: string;
+  difficulty?:      string;
+  tone?:            string;
+  bankId?:          string;
+  teacherId?:       string;
+  subjectHint?:     string;
+  strategyContext?: { strategy: Strategy; baseQuestion: string | null };
 }
 
 export type GenerateFn = (
@@ -67,6 +73,7 @@ export async function runTypeLoop(
     const { valid } = await validateQuestionBlock(
       type, raw, [],
       context?.difficulty as ('easy' | 'moderate' | 'hard') | undefined,
+      context?.strategyContext,
     );
     collected = collected.concat(valid);
 
@@ -164,6 +171,71 @@ export function makeTrackedGenerateFn(): { generateFn: GenerateFn; getTokensUsed
     return questions;
   };
   return { generateFn, getTokensUsed: () => tokensUsed };
+}
+
+// ── Slot-based generation ─────────────────────────────────────────────────────
+// New layer between generateSet and runTypeLoop, wiring together slot
+// allocation, strategy picking, and the concurrency limiter.
+// Each slot is a single question with its own excerpt, difficulty, and
+// historical strategy — runTypeLoop is reused with count=1 per slot.
+
+export async function generateTypeViaSlots(
+  type:               QuestionType,
+  count:              number,
+  marksPerQuestion:   number,
+  chapters:           ChapterInput[],
+  explicitDifficulty: 'easy' | 'moderate' | 'hard' | undefined,
+  teacherId:          string,
+  tone:               ToneOption,
+  bankId:             string | undefined,
+  limiter:            ReturnType<typeof createLimiter>,
+): Promise<{ questions: object[]; requested: number; received: number }> {
+  const slots = await allocateSlots(type, count, marksPerQuestion, chapters, explicitDifficulty);
+
+  const settled = await Promise.allSettled(
+    slots.map(slot =>
+      limiter(async () => {
+        const { strategy, baseQuestion } = await pickStrategy(teacherId, slot.chapterId, type);
+
+        const slotGenerateFn: GenerateFn = async () => {
+          const { system, user } = await buildPrompt(
+            type,
+            slot.sourceExcerpt,
+            1,
+            teacherId,
+            slot.difficulty,
+            tone,
+            bankId,
+            undefined,
+            undefined,
+            strategy,
+            baseQuestion,
+            slot.chapterName,
+          );
+          const { questions } = await callGroq(type, system, user);
+          return questions;
+        };
+
+        return runTypeLoop(
+          slot.sourceExcerpt,
+          type,
+          1,
+          marksPerQuestion,
+          slotGenerateFn,
+          { difficulty: slot.difficulty, strategyContext: { strategy, baseQuestion } },
+        );
+      }),
+    ),
+  );
+
+  const questions: object[] = [];
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value.status === 'success') {
+      questions.push(...r.value.questions);
+    }
+  }
+
+  return { questions, requested: count, received: questions.length };
 }
 
 export interface GenerationError {

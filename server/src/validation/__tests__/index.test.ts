@@ -86,6 +86,82 @@ describe('validateQuestionBlock', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// validateQuestionBlock — strategy-conditional similarity
+// ────────────────────────────────────────────────────────────────────────────
+describe('validateQuestionBlock — strategy-conditional similarity', () => {
+  const baseQuestion = 'What is the powerhouse of the cell?';
+
+  // helpers to build questions with a specific question text
+  const makeQ = (text: string) =>
+    makeQuestion({ question: { hide_text: false, text, read_text: false, image: '' } });
+
+  it('strategy=rephrase rejects an identical copy of the base (model failed to rephrase)', async () => {
+    // same text as base → Jaccard = 1.0 > 0.92 threshold → rejected
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks', [makeQ(baseQuestion)], [],
+      undefined,
+      { strategy: 'rephrase', baseQuestion },
+    );
+    expect(valid).toHaveLength(0);
+    expect(invalidCount).toBe(1);
+  });
+
+  it('strategy=rephrase accepts a genuinely rephrased question (similarity well below 0.92)', async () => {
+    // distinct vocabulary → Jaccard ≈ 0.11, accepted
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks',
+      [makeQ('Describe the role of mitochondria in energy production.')],
+      [],
+      undefined,
+      { strategy: 'rephrase', baseQuestion },
+    );
+    expect(valid).toHaveLength(1);
+    expect(invalidCount).toBe(0);
+  });
+
+  it('strategy=variant rejects a question identical to the base', async () => {
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks', [makeQ(baseQuestion)], [],
+      undefined,
+      { strategy: 'variant', baseQuestion },
+    );
+    expect(valid).toHaveLength(0);
+    expect(invalidCount).toBe(1);
+  });
+
+  it('strategy=reuse always accepts even when text is identical to base', async () => {
+    // skip similarity entirely — identical copy is intentional
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks', [makeQ(baseQuestion)], [],
+      undefined,
+      { strategy: 'reuse', baseQuestion },
+    );
+    expect(valid).toHaveLength(1);
+    expect(invalidCount).toBe(0);
+  });
+
+  it('strategy=fresh still applies the 0.8-threshold exemplar check (existing behaviour)', async () => {
+    const exemplar = baseQuestion; // identical → Jaccard = 1.0 > 0.8 → rejected
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks', [makeQ(baseQuestion)], [exemplar],
+      undefined,
+      { strategy: 'fresh', baseQuestion: null },
+    );
+    expect(valid).toHaveLength(0);
+    expect(invalidCount).toBe(1);
+  });
+
+  it('no strategyContext (undefined) falls back to exemplar check — backward compat', async () => {
+    const exemplar = baseQuestion;
+    const { valid, invalidCount } = await validateQuestionBlock(
+      'fillInBlanks', [makeQ(baseQuestion)], [exemplar],
+    );
+    expect(valid).toHaveLength(0);
+    expect(invalidCount).toBe(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // validateExportSet (stub)
 // ────────────────────────────────────────────────────────────────────────────
 describe('validateExportSet', () => {

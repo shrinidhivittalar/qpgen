@@ -95,3 +95,11 @@ export interface TypeResult {
   requested?:   number;
   error?:       string;
 }
+
+export interface ChapterInfo {
+  _id:               string;
+  chapterName:       string;
+  chapterNumber:     number;
+  weightPercent:     number;
+  subject:           string;
+}
