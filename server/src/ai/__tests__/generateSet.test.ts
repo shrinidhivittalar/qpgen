@@ -14,6 +14,14 @@ const makeRaw = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// TrueFalse schema requires a declarative statement (no '?' at end)
+const makeTFRaw = (overrides: Record<string, unknown> = {}) => ({
+  ...makeRaw(),
+  question:      { hide_text: false, text: 'X is a declarative statement.', read_text: false, image: '' },
+  correctAnswer: true,
+  ...overrides,
+});
+
 const makeRawBatch = (n: number) => Array.from({ length: n }, () => makeRaw());
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -39,10 +47,7 @@ describe('generateSet', () => {
           })));
         }
         if (type === 'trueFalse') {
-          return Promise.resolve(Array.from({ length: count }, () => ({
-            ...makeRaw(),
-            correctAnswer: true,
-          })));
+          return Promise.resolve(Array.from({ length: count }, () => makeTFRaw()));
         }
         return Promise.resolve(makeRawBatch(count));
       });
@@ -104,9 +109,7 @@ describe('generateSet', () => {
     const fn = vi.fn<GenerateFn>().mockImplementation((_src, type, count) => {
       if (type === 'reordering') return Promise.resolve([]); // always fails
       if (type === 'trueFalse') {
-        return Promise.resolve(Array.from({ length: count }, () => ({
-          ...makeRaw(), correctAnswer: true,
-        })));
+        return Promise.resolve(Array.from({ length: count }, () => makeTFRaw()));
       }
       return Promise.resolve(makeRawBatch(count));
     });
@@ -167,7 +170,7 @@ describe('generateSet', () => {
     const fn = vi.fn<GenerateFn>().mockImplementation((_src, type, count) => {
       const delay = type === 'fillInBlanks' ? 100 : 10;
       const data  = type === 'trueFalse'
-        ? Array.from({ length: count }, () => ({ ...makeRaw(), correctAnswer: true }))
+        ? Array.from({ length: count }, () => makeTFRaw())
         : makeRawBatch(count);
       return new Promise(resolve => setTimeout(() => resolve(data), delay));
     });

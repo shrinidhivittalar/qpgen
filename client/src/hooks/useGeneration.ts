@@ -1,19 +1,26 @@
 import { useState, useCallback } from 'react';
 import { apiFetch } from '../lib/api';
-import type { TypeConfig, TypeResult, QuestionType, DifficultyLevel, ToneOption } from '../types';
+import type { TypeConfig, TypeResult, QuestionType, DifficultyLevel, ToneOption, PaperStructure } from '../types';
 
 export interface GenerationState {
-  setId:             string | null;
-  fileName:          string | null;
-  wordCount:         number | null;
-  previewText:       string | null;
-  typeConfig:        TypeConfig[];
-  activeSchemeId:    string | null;
+  setId:                  string | null;
+  fileName:               string | null;
+  wordCount:              number | null;
+  previewText:            string | null;
+  typeConfig:             TypeConfig[];
+  activeSchemeId:         string | null;
+  // Paper mode — populated when the scheme has a parsed paperStructure
+  activePaperStructure:   PaperStructure | null;
+  filledPaperStructure:   PaperStructure | null;
+  isPaperGenerating:      boolean;
+  paperGenerateError:     string | null;
+  paperStats:             { totalSlots: number; filledSlots: number; failedSlots: number } | null;
   difficultyDefault: DifficultyLevel;
   tone:              ToneOption;
   bankId:            string | null;
   results:           Record<QuestionType, TypeResult>;
   isGenerating:      boolean;
+  isRegenerating:    Partial<Record<QuestionType, boolean>>;
   exportError:       string | null;
 }
 
@@ -27,22 +34,29 @@ const emptyResults = (): Record<QuestionType, TypeResult> => ({
   trueFalse:         { status: 'idle' },
   assertionReason:   { status: 'idle' },
   shortAnswer:       { status: 'idle' },
+  longAnswer:        { status: 'idle' },
 });
 
 export function useGeneration() {
   const [state, setState] = useState<GenerationState>({
-    setId:             null,
-    fileName:          null,
-    wordCount:         null,
-    previewText:       null,
-    typeConfig:        [],
-    activeSchemeId:    null,
-    difficultyDefault: 'moderate',
-    tone:              'formal-board-exam',
-    bankId:            null,
-    results:           emptyResults(),
-    isGenerating:      false,
-    exportError:       null,
+    setId:                  null,
+    fileName:               null,
+    wordCount:              null,
+    previewText:            null,
+    typeConfig:             [],
+    activeSchemeId:         null,
+    activePaperStructure:   null,
+    filledPaperStructure:   null,
+    isPaperGenerating:      false,
+    paperGenerateError:     null,
+    paperStats:             null,
+    difficultyDefault:      'moderate',
+    tone:                   'formal-board-exam',
+    bankId:                 null,
+    results:                emptyResults(),
+    isGenerating:           false,
+    isRegenerating:         {},
+    exportError:            null,
   });
 
   const uploadFile = useCallback(async (file: File): Promise<void> => {
@@ -60,12 +74,17 @@ export function useGeneration() {
 
     setState(s => ({
       ...s,
-      setId:          data.setId,
-      fileName:       data.fileName,
-      wordCount:      data.wordCount,
-      previewText:    data.previewText,
-      activeSchemeId: null,
-      results:        emptyResults(),
+      setId:                data.setId,
+      fileName:             data.fileName,
+      wordCount:            data.wordCount,
+      previewText:          data.previewText,
+      activeSchemeId:       null,
+      activePaperStructure: null,
+      filledPaperStructure: null,
+      paperStats:           null,
+      paperGenerateError:   null,
+      results:              emptyResults(),
+      isRegenerating:       {},
     }));
   }, []);
 
@@ -73,20 +92,25 @@ export function useGeneration() {
     setState(s => ({ ...s, typeConfig: config }));
   }, []);
 
-  // schemeId is null when the user skipped scheme selection or configured manually
-  const applyScheme = useCallback((parsedConfig: TypeConfig[], schemeId: string | null = null) => {
-    // Deduplicate by merging same-type entries (defensive against stale DB records
-    // or multi-section blueprints where both sections map to the same type)
+  const applyScheme = useCallback((
+    parsedConfig:   TypeConfig[],
+    schemeId:       string | null = null,
+    paperStructure: PaperStructure | null = null,
+  ) => {
     const merged = new Map<string, TypeConfig>();
     for (const tc of parsedConfig) {
       const existing = merged.get(tc.type);
-      if (existing) {
-        existing.count += tc.count;
-      } else {
-        merged.set(tc.type, { ...tc });
-      }
+      if (existing) { existing.count += tc.count; } else { merged.set(tc.type, { ...tc }); }
     }
-    setState(s => ({ ...s, typeConfig: Array.from(merged.values()), activeSchemeId: schemeId }));
+    setState(s => ({
+      ...s,
+      typeConfig:           Array.from(merged.values()),
+      activeSchemeId:       schemeId,
+      activePaperStructure: paperStructure,
+      filledPaperStructure: null,
+      paperStats:           null,
+      paperGenerateError:   null,
+    }));
   }, []);
 
   const setIntent = useCallback((
@@ -111,12 +135,10 @@ export function useGeneration() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          typeConfig,
-          difficultyDefault,
-          tone,
-          ...(activeSchemeId          ? { schemeId: activeSchemeId } : {}),
-          ...(bankId                  ? { bankId }                   : {}),
-          ...(chapterIds.length > 0   ? { chapterIds }               : {}),
+          typeConfig, difficultyDefault, tone,
+          ...(activeSchemeId        ? { schemeId: activeSchemeId } : {}),
+          ...(bankId                ? { bankId }                   : {}),
+          ...(chapterIds.length > 0 ? { chapterIds }               : {}),
         }),
       });
 
@@ -151,22 +173,181 @@ export function useGeneration() {
     }
   }, [state.setId, state.typeConfig, state.activeSchemeId, state.difficultyDefault, state.tone, state.bankId]);
 
+  // Edit a single question inline. Throws on validation / network failure.
+  const editQuestion = useCallback(async (
+    type:       QuestionType,
+    questionId: number,
+    updated:    object,
+  ): Promise<void> => {
+    const res = await apiFetch(`/api/sets/${state.setId}/questions/${questionId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(updated),
+    });
+
+    if (!res.ok) {
+      const body = await res.json() as { error?: string };
+      throw new Error(body.error ?? 'Failed to save question.');
+    }
+
+    const body = await res.json() as { question: object };
+
+    setState(s => {
+      const typeResult = s.results[type];
+      if (typeResult.status !== 'success' || !typeResult.questions) return s;
+      return {
+        ...s,
+        results: {
+          ...s.results,
+          [type]: {
+            ...typeResult,
+            questions: typeResult.questions.map((q: any) =>
+              q.id === questionId ? body.question : q,
+            ),
+          },
+        },
+      };
+    });
+  }, [state.setId]);
+
+  // Regenerate a single type using the same sources as the original generation.
+  // Returns { success, error? }. On success all blocks are updated (IDs change globally).
+  const regenerateType = useCallback(async (
+    type: QuestionType,
+  ): Promise<{ success: boolean; error?: string }> => {
+    setState(s => ({ ...s, isRegenerating: { ...s.isRegenerating, [type]: true } }));
+
+    try {
+      const res = await apiFetch(`/api/sets/${state.setId}/regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ type }),
+      });
+
+      const body = await res.json() as {
+        questionBlocks?: Array<{ questionType: string; totalMarks: number; questions: unknown[] }>;
+        success?:        boolean;
+        error?:          string;
+        requested?:      number;
+        received?:       number;
+      };
+
+      if (!res.ok) {
+        setState(s => ({ ...s, isRegenerating: { ...s.isRegenerating, [type]: false } }));
+        return { success: false, error: body.error ?? 'Regeneration failed.' };
+      }
+
+      // Update ALL blocks from the response (global IDs were reassigned)
+      setState(s => {
+        const results = { ...s.results };
+        for (const block of body.questionBlocks ?? []) {
+          const qType = block.questionType as QuestionType;
+          results[qType] = {
+            status:     'success',
+            questions:  block.questions,
+            totalMarks: block.totalMarks,
+            received:   block.questions.length,
+          };
+        }
+        // If regeneration itself failed, mark that type accordingly
+        if (body.success === false) {
+          results[type] = {
+            status:    'failed',
+            requested: body.requested,
+            received:  body.received,
+            error:     body.error,
+          };
+        }
+        return { ...s, results, isRegenerating: { ...s.isRegenerating, [type]: false } };
+      });
+
+      return { success: body.success !== false };
+    } catch {
+      setState(s => ({ ...s, isRegenerating: { ...s.isRegenerating, [type]: false } }));
+      return { success: false, error: 'Regeneration failed.' };
+    }
+  }, [state.setId]);
+
+  const generatePaper = useCallback(async (chapterIds: string[]): Promise<void> => {
+    setState(s => ({
+      ...s,
+      isPaperGenerating:    true,
+      paperGenerateError:   null,
+      filledPaperStructure: null,
+      paperStats:           null,
+    }));
+
+    try {
+      const { setId, activePaperStructure, tone } = state;
+      const res = await apiFetch(`/api/sets/${setId}/generate-paper`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ paperStructure: activePaperStructure, chapterIds, tone }),
+      });
+
+      const body = await res.json() as {
+        paperStructure?: PaperStructure;
+        totalSlots?:     number;
+        filledSlots?:    number;
+        failedSlots?:    number;
+        tokensEstimate?: number;
+        error?:          string;
+      };
+
+      if (!res.ok) throw new Error(body.error ?? `Paper generation failed (${res.status})`);
+
+      setState(s => ({
+        ...s,
+        isPaperGenerating:    false,
+        filledPaperStructure: body.paperStructure ?? null,
+        paperStats: {
+          totalSlots:  body.totalSlots  ?? 0,
+          filledSlots: body.filledSlots ?? 0,
+          failedSlots: body.failedSlots ?? 0,
+        },
+      }));
+    } catch (err) {
+      setState(s => ({
+        ...s,
+        isPaperGenerating:  false,
+        paperGenerateError: err instanceof Error ? err.message : 'Paper generation failed.',
+      }));
+    }
+  }, [state.setId, state.activePaperStructure, state.tone]);
+
   const reset = useCallback(() => {
     setState({
-      setId:             null,
-      fileName:          null,
-      wordCount:         null,
-      previewText:       null,
-      typeConfig:        [],
-      activeSchemeId:    null,
-      difficultyDefault: 'moderate',
-      tone:              'formal-board-exam',
-      bankId:            null,
-      results:           emptyResults(),
-      isGenerating:      false,
-      exportError:       null,
+      setId:                  null,
+      fileName:               null,
+      wordCount:              null,
+      previewText:            null,
+      typeConfig:             [],
+      activeSchemeId:         null,
+      activePaperStructure:   null,
+      filledPaperStructure:   null,
+      isPaperGenerating:      false,
+      paperGenerateError:     null,
+      paperStats:             null,
+      difficultyDefault:      'moderate',
+      tone:                   'formal-board-exam',
+      bankId:                 null,
+      results:                emptyResults(),
+      isGenerating:           false,
+      isRegenerating:         {},
+      exportError:            null,
     });
   }, []);
 
-  return { state, uploadFile, setTypeConfig, setIntent, applyScheme, generate, reset };
+  return {
+    state,
+    uploadFile,
+    setTypeConfig,
+    setIntent,
+    applyScheme,
+    generate,
+    generatePaper,
+    editQuestion,
+    regenerateType,
+    reset,
+  };
 }

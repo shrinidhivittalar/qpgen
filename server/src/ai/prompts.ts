@@ -1,4 +1,5 @@
 import { QuestionType } from '../validation/schemaMap.js';
+import type { PaperQuestion } from '../types/paperStructure.js';
 import { DIFFICULTY_INSTRUCTIONS } from './difficulty.js';
 import { getExemplars } from './exemplarRetrieval.js';
 import { Strategy } from './strategyPicker.js';
@@ -40,6 +41,24 @@ into a question by simply blanking out a word or restating it as a query. \
 Every question you write is something an experienced teacher would actually \
 put in front of students to test genuine understanding, not surface recall \
 of exact wording.
+
+SCENARIO GROUNDING RULE
+Application and scenario-based questions must be grounded in the actual \
+examples, case studies, and domains present in the source text. If the \
+source mentions "loan default prediction", "fraud detection", "traffic \
+analysis", "sentiment analysis on reviews", or any other specific context, \
+base your application questions on THOSE contexts — do not substitute a \
+generic hospital or medical scenario unless the source explicitly uses one. \
+Read the source carefully and extract its examples before writing questions.
+
+DOMAIN DIVERSITY RULE
+Scan the source for all the distinct domains and applications it mentions. \
+Distribute questions so that no single domain accounts for more than 2 \
+questions in a batch of 10 or more. If the source text contains [SECTION N] \
+markers, treat each section as a separate pool and generate approximately \
+equal numbers of questions from each section. A student reading the full \
+batch must encounter multiple genuinely different real-world contexts, each \
+traceable to a specific part of the source text.
 
 SOURCE MATERIAL HIERARCHY
 - The teacher-flagged high-value snippets listed below are your PRIMARY \
@@ -168,7 +187,10 @@ TYPE-SPECIFIC RULES
 - "correctAnswer" must be the exact text of one of the options.
 - All distractors must be plausible — a student who hasn't studied well \
 should find at least two options attractive.
-- Avoid "all of the above" and "none of the above" options.`,
+- NEVER use "all of the above", "none of the above", "both A and B", or \
+any other meta-option. Every option must be a standalone, independently \
+evaluable claim. If you find yourself wanting to write "all of the above", \
+rewrite the question entirely with four genuinely distinct options.`,
 
   multiSelect: `
 SCHEMA FOR THIS TYPE:
@@ -274,6 +296,11 @@ SCHEMA FOR THIS TYPE:
 ]
 
 TYPE-SPECIFIC RULES
+- question.text MUST be a declarative statement — a sentence that asserts \
+something as fact. It must NOT end with a question mark and must NOT be \
+phrased as "Which…?", "What…?", "How…?", or any other interrogative form. \
+Wrong: "Which stage involves data collection?" \
+Correct: "Data collection is the first stage of the AI Project Cycle."
 - The statement should be a genuine claim requiring evaluation — ideally \
 built around a common misconception stated as if it were fact — not a \
 trivially obvious truth or falsehood.
@@ -290,10 +317,10 @@ SCHEMA FOR THIS TYPE:
     "assertion": string,
     "reason": string,
     "options": [
-      "Both (A) and (R) are true and (R) is the correct explanation of (A).",
-      "Both (A) and (R) are true, but (R) is not the correct explanation of (A).",
-      "(A) is true, but (R) is false.",
-      "(A) is false, but (R) is true."
+      "Both A and R are correct, and R is the correct explanation of A",
+      "Both A and R are correct, but R is not the correct explanation of A",
+      "A is correct, but R is incorrect",
+      "A is incorrect, but R is correct"
     ],
     "correctAnswer": string,
     "explanation": string
@@ -302,17 +329,18 @@ SCHEMA FOR THIS TYPE:
 
 TYPE-SPECIFIC RULES
 - "options" must be EXACTLY these 4 strings, in this exact order, every \
-time — never rephrase, reorder, or shorten them.
+time — never rephrase, reorder, shorten, or add punctuation to them.
+- "correctAnswer" must be one of those 4 strings verbatim.
 - Assertion and reason must each be an independently checkable true-or- \
 false claim about the chapter's content — not two halves of a single \
 sentence artificially split apart.
-- The hardest and most valuable variant is: both true, but the reason \
+- The hardest and most valuable variant is: both correct, but the reason \
 does NOT actually explain the assertion (a common trap) — use this \
 case deliberately in some questions, not only the straightforward \
-both-true-and-explains case.
-- Explanation must state the truth value of the assertion, the truth \
-value of the reason, AND — if both are true — whether the reason \
-genuinely explains the assertion, per {{examBoard}} convention.`,
+both-correct-and-explains case.
+- Explanation must state whether the assertion is correct, whether the \
+reason is correct, AND — if both are correct — whether the reason \
+genuinely explains the assertion.`,
 
   shortAnswer: `
 SCHEMA FOR THIS TYPE:
@@ -343,6 +371,39 @@ would write — not a bare bullet dump of the markingScheme's point labels.
 in the student's own words, even at 2 marks — this type should not be \
 used for a question answerable in 2-3 words (use fillInBlanks instead \
 for that).`,
+
+  longAnswer: `
+SCHEMA FOR THIS TYPE:
+{
+  "marks": number,
+  "explanation": string,
+  "preamble": string,
+  "parts": [
+    {
+      "label": string,
+      "marks": number,
+      "question": string,
+      "modelAnswer": string
+    }
+  ]
+}
+
+NOTE: Return a SINGLE JSON object (not wrapped in an array) for this type.
+
+TYPE-SPECIFIC RULES
+- "preamble": Write a realistic scenario or case study paragraph based on \
+the source material. Introduce a context, entity, or situation that all \
+sub-part questions can reference. Invent a fresh real-world scenario \
+rather than copying text verbatim. 3-5 sentences.
+- "parts": Each sub-part is a question arising from the preamble scenario. \
+Labels are "a", "b", "c", etc. Marks per part must sum exactly to the \
+total "marks" value.
+- Sub-part questions should escalate in cognitive demand: start with \
+recall or comprehension, end with application or analysis.
+- "modelAnswer" for each part must be exam-quality prose matching its \
+marks: ~20-30 words per mark.
+- "explanation" is a teacher note explaining the conceptual linkage \
+between the preamble and the sub-parts — not a restatement of the answers.`,
 };
 
 // ── Auxiliary instruction blocks ──────────────────────────────────────────────
@@ -448,6 +509,82 @@ export async function buildPrompt(
   // ── Assemble user message ─────────────────────────────────────────────────
   const chapterPrefix = chapterName
     ? `This question set should be drawn from the chapter "${chapterName}" in the source text.\n\n`
+    : '';
+
+  const sectionCount = (sourceText.match(/^\[SECTION \d+\]/gm) ?? []).length;
+  const sectionHint = sectionCount > 1
+    ? `The source below is divided into ${sectionCount} sections. Generate approximately ${Math.round(count / sectionCount)} questions from each section to ensure broad topic coverage.\n\n`
+    : '';
+
+  const user = `${chapterPrefix}${sectionHint}SOURCE TEXT:\n${sourceText}`;
+
+  return { system, user };
+}
+
+// ── Long-answer prompt (paper generation path) ────────────────────────────────
+// Returns a single JSON object, not an array. Used by paperGenerator.ts.
+
+export interface LongAnswerPromptContext {
+  tone?:        'formal-board-exam' | 'neutral' | 'conversational';
+  chapterName?: string;
+  marks:        number;
+  subPartCount: number;
+}
+
+const LONG_ANSWER_SYSTEM = `You are a senior question paper setter.
+
+Generate a long-answer question based on the provided source text.
+The question consists of a preamble (scenario/case) and sub-part questions.
+
+Return ONLY a raw JSON object (no markdown, no array wrapper):
+{
+  "marks": <total marks>,
+  "explanation": "<teacher note on conceptual linkage>",
+  "preamble": "<3-5 sentence scenario paragraph based on the source>",
+  "parts": [
+    {
+      "label": "a",
+      "marks": <marks for this part>,
+      "question": "<question text>",
+      "modelAnswer": "<exam-quality model answer>"
+    }
+  ]
+}
+
+Rules:
+- "preamble": Invent a fresh real-world scenario that draws from the source \
+material's concepts. Do NOT copy text verbatim. The scenario should set up \
+context for all sub-part questions.
+- "parts": Generate exactly {{subPartCount}} sub-parts labelled a, b, c, ... \
+Sub-part marks MUST sum to exactly {{totalMarks}}. Distribute as: {{partMarkDistrib}}.
+- Sub-parts should escalate in cognitive demand: recall first, application/analysis last.
+- "modelAnswer" length: ~20-30 words per mark for that sub-part.
+- "explanation": A teacher-facing note, not a student answer — explain \
+why these sub-parts test the key learning outcomes of the source.
+- TONE: {{tone}}`;
+
+export function buildLongAnswerPrompt(
+  sourceText: string,
+  ctx:        LongAnswerPromptContext,
+): { system: string; user: string } {
+  const tone = TONE_INSTRUCTION[ctx.tone ?? 'formal-board-exam'] ?? TONE_INSTRUCTION['formal-board-exam'];
+
+  // Build explicit per-part mark distribution so the LLM can't misread the total.
+  const base    = Math.floor(ctx.marks / ctx.subPartCount);
+  const rem     = ctx.marks % ctx.subPartCount;
+  const distrib = Array.from({ length: ctx.subPartCount }, (_, i) =>
+    `${String.fromCharCode(97 + i)}) ${base + (i < rem ? 1 : 0)} mark${base + (i < rem ? 1 : 0) !== 1 ? 's' : ''}`,
+  ).join(', ');
+
+  const system = `[QUESTION_TYPE:longAnswer]\n` + renderTemplate(LONG_ANSWER_SYSTEM, {
+    subPartCount:    String(ctx.subPartCount),
+    totalMarks:      String(ctx.marks),
+    partMarkDistrib: distrib,
+    tone,
+  });
+
+  const chapterPrefix = ctx.chapterName
+    ? `This question should be drawn from the chapter "${ctx.chapterName}" in the source text.\n\n`
     : '';
 
   const user = `${chapterPrefix}SOURCE TEXT:\n${sourceText}`;

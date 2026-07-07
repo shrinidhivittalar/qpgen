@@ -51,6 +51,7 @@ const QuestionSetSchema = new Schema(
     tone:                 { type: String, enum: ['formal-board-exam', 'neutral', 'conversational'], default: null },
     bankId:               { type: String, default: null },
     chapterIds:           { type: [Schema.Types.ObjectId], ref: 'TextbookChapter', default: [] },
+    paperStructure:       { type: Schema.Types.Mixed,    default: null },
     hodId:                { type: Schema.Types.ObjectId, ref: 'User',    default: null },
     hodComment:           { type: String,   default: null },
     typesUnderRevision:   { type: [String], default: [] },

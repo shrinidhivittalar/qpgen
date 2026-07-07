@@ -8,6 +8,7 @@ import { SortingSchema }           from './schemas/sorting.js';
 import { TrueFalseSchema }         from './schemas/trueFalse.js';
 import { AssertionReasonSchema }   from './schemas/assertionReason.js';
 import { ShortAnswerSchema }       from './schemas/shortAnswer.js';
+import { LongAnswerSchema }        from './schemas/longAnswer.js';
 
 export type QuestionType =
   | 'fillInBlanks'
@@ -18,7 +19,8 @@ export type QuestionType =
   | 'sorting'
   | 'trueFalse'
   | 'assertionReason'
-  | 'shortAnswer';
+  | 'shortAnswer'
+  | 'longAnswer';
 
 export const schemaMap: Record<QuestionType, z.ZodTypeAny> = {
   fillInBlanks:      FillInBlanksSchema,
@@ -30,4 +32,5 @@ export const schemaMap: Record<QuestionType, z.ZodTypeAny> = {
   trueFalse:         TrueFalseSchema,
   assertionReason:   AssertionReasonSchema,
   shortAnswer:       ShortAnswerSchema,
+  longAnswer:        LongAnswerSchema,
 };

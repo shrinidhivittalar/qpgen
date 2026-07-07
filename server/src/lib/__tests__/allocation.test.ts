@@ -40,7 +40,8 @@ describe('allocateByWeight', () => {
     expect(allocateByWeight(7, [100])).toEqual([7]);
   });
 
-  it('handles all-zero weights without dividing by zero — returns all zeros', () => {
-    expect(allocateByWeight(10, [0, 0, 0])).toEqual([0, 0, 0]);
+  it('handles all-zero weights by distributing evenly (no questions lost)', () => {
+    // When all chapter weights are 0, we distribute equally so no type generates 0 questions
+    expect(allocateByWeight(10, [0, 0, 0])).toEqual([4, 3, 3]);
   });
 });

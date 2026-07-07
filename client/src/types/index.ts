@@ -30,7 +30,8 @@ export type QuestionType =
   | 'sorting'
   | 'trueFalse'
   | 'assertionReason'
-  | 'shortAnswer';
+  | 'shortAnswer'
+  | 'longAnswer';
 
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   fillInBlanks:      'Fill in the Blanks',
@@ -42,13 +43,50 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   trueFalse:         'True / False',
   assertionReason:   'Assertion / Reason',
   shortAnswer:       'Short Answer',
+  longAnswer:        'Long Answer',
 };
 
 export const ALL_QUESTION_TYPES: QuestionType[] = [
   'fillInBlanks', 'multipleChoice', 'multiSelect',
   'matchTheFollowing', 'reordering', 'sorting', 'trueFalse',
-  'assertionReason', 'shortAnswer',
+  'assertionReason', 'shortAnswer', 'longAnswer',
 ];
+
+// ── Paper Structure types (hierarchical paper format) ─────────────────────────
+
+export interface PaperWordLimit {
+  min: number;
+  max: number;
+}
+
+export interface PaperQuestion {
+  number:       number;
+  type:         QuestionType;
+  marks:        number;
+  wordLimit?:   PaperWordLimit;
+  unitRef?:     string;
+  chapterId?:   string;
+  subPartCount?: number;
+  generated?:   unknown | null;
+  error?:       string;
+}
+
+export interface PaperSection {
+  label:          string;
+  title?:         string;
+  instructions?:  string;
+  totalToAttempt?: number;
+  totalMarks:     number;
+  questions:      PaperQuestion[];
+}
+
+export interface PaperStructure {
+  title:               string;
+  totalMarks:          number;
+  duration?:           string;
+  generalInstructions: string[];
+  sections:            PaperSection[];
+}
 
 export type DifficultyLevel = 'easy' | 'moderate' | 'hard';
 export type ToneOption     = 'formal-board-exam' | 'neutral' | 'conversational';
@@ -66,15 +104,16 @@ export interface ReferenceBank {
 }
 
 export interface Scheme {
-  schemeId:      string;
-  name:          string;
-  subject:       string;
-  standard:      string;
-  examType:      string | null;
-  fileType:      'pdf' | 'docx';
-  parsedConfig:  TypeConfig[];
+  schemeId:       string;
+  name:           string;
+  subject:        string;
+  standard:       string;
+  examType:       string | null;
+  fileType:       'pdf' | 'docx';
+  parsedConfig:   TypeConfig[];
   examBlueprint?: ExamBlueprint | null;
-  updatedAt:     string;
+  paperStructure?: PaperStructure | null;
+  updatedAt:      string;
 }
 
 export interface QuestionBlockResult {

@@ -7,7 +7,8 @@ import SchemePicker from '../components/SchemePicker';
 import TypeConfigurator from '../components/TypeConfigurator';
 import GenerationProgress from '../components/GenerationProgress';
 import QuestionBlock from '../components/QuestionBlock';
-import type { Scheme, TypeConfig, ChapterInfo, ReferenceBank } from '../types';
+import { PaperView } from '../components/PaperView';
+import type { Scheme, TypeConfig, ChapterInfo, ReferenceBank, PaperStructure } from '../types';
 
 // ── Small re-usable spinner ────────────────────────────────────────────────
 function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
@@ -21,11 +22,27 @@ function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
 
 export default function DashboardPage() {
   const { user, logout } = useAuth();
-  const { state, uploadFile, setTypeConfig, setIntent, applyScheme, generate } = useGeneration();
+  const { state, uploadFile, setTypeConfig, setIntent, applyScheme, generate, generatePaper, editQuestion, regenerateType } = useGeneration();
   const {
-    setId, fileName, wordCount, typeConfig, results, isGenerating, exportError,
-    difficultyDefault, tone, bankId,
+    setId, fileName, wordCount, typeConfig, results, isGenerating, isRegenerating, exportError,
+    difficultyDefault, tone, bankId, activeSchemeId,
+    activePaperStructure, filledPaperStructure, isPaperGenerating, paperGenerateError, paperStats,
   } = state;
+
+  // Paper mode is active when the applied scheme has a parsed paper structure
+  const isPaperMode = Boolean(activePaperStructure);
+
+  const [regenToast, setRegenToast] = useState<{ type: string; ok: boolean; msg: string } | null>(null);
+
+  function showToast(type: string, ok: boolean, msg: string) {
+    setRegenToast({ type, ok, msg });
+    setTimeout(() => setRegenToast(null), 3500);
+  }
+
+  async function handleRegenerate(type: string) {
+    const { success, error } = await regenerateType(type as any);
+    showToast(type, success, success ? `${type} regenerated.` : (error ?? 'Regeneration failed.'));
+  }
 
   // ── Scheme step state ──────────────────────────────────────────────────────
   const [schemeStep, setSchemeStep] = useState<'pending' | 'done'>('pending');
@@ -36,8 +53,8 @@ export default function DashboardPage() {
     return uploadFile(file);
   }
 
-  function handleSchemeApply(parsedConfig: TypeConfig[], schemeId?: string) {
-    applyScheme(parsedConfig, schemeId ?? null);
+  function handleSchemeApply(parsedConfig: TypeConfig[], schemeId?: string, paperStructure?: PaperStructure | null) {
+    applyScheme(parsedConfig, schemeId ?? null, paperStructure ?? null);
     setSchemeStep('done');
   }
 
@@ -53,6 +70,9 @@ export default function DashboardPage() {
   const [chaptersLoading, setChaptersLoading] = useState(true);
   const [totalWeight,     setTotalWeight]     = useState(0);
   const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(new Set());
+
+  const canGeneratePaper =
+    !isPaperGenerating && Boolean(setId) && schemeStep === 'done' && selectedChapterIds.size > 0;
 
   // Upload form
   const [showChapterForm,  setShowChapterForm]  = useState(false);
@@ -96,7 +116,7 @@ export default function DashboardPage() {
       form.append('subject',           chapterForm.subject.trim() || 'General');
       form.append('chapterName',       chapterForm.chapterName.trim());
       form.append('chapterNumber',     chapterForm.chapterNumber || '1');
-      form.append('weightPercent',     chapterForm.weightPercent || '0');
+      form.append('weightPercent',     chapterForm.weightPercent || '10');
       form.append('highValueSnippets', chapterForm.highValueSnippets.trim());
 
       const res = await apiFetch('/api/chapters/upload', { method: 'POST', body: form });
@@ -230,7 +250,7 @@ export default function DashboardPage() {
   useEffect(() => { loadSchemes(); }, []);
 
   async function handleUseScheme(scheme: Scheme) {
-    applyScheme(scheme.parsedConfig as TypeConfig[], scheme.schemeId);
+    applyScheme(scheme.parsedConfig as TypeConfig[], scheme.schemeId, scheme.paperStructure ?? null);
     setSchemeStep('done');
   }
 
@@ -330,13 +350,14 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {/* Chapter selection — shown when scheme is done and chapters exist */}
+          {/* Chapter selection — optional in normal mode, required in paper mode */}
           {setId && schemeStep === 'done' && chapters.length > 0 && (
             <section className="space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-gray-800">
-                  Focus generation on specific chapters
-                  <span className="ml-2 text-xs font-normal text-gray-400">(optional)</span>
+                  {isPaperMode ? 'Select chapters' : 'Focus generation on specific chapters'}
+                  {!isPaperMode && <span className="ml-2 text-xs font-normal text-gray-400">(optional)</span>}
+                  {isPaperMode  && <span className="ml-2 text-xs font-normal text-red-400">required</span>}
                 </h2>
                 {selectedChapterIds.size > 0 && (
                   <button
@@ -380,32 +401,33 @@ export default function DashboardPage() {
               </div>
 
               {selectedChapterIds.size === 0 ? (
-                <p className="text-xs text-gray-400">
-                  No chapters selected — generation will use the full source PDF.
+                <p className={`text-xs ${isPaperMode ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {isPaperMode
+                    ? 'Select at least one chapter to enable paper generation.'
+                    : 'No chapters selected — generation will use the full source PDF.'}
                 </p>
-              ) : (
-                <p className="text-xs text-indigo-600">
-                  {selectedChapterIds.size} chapter{selectedChapterIds.size > 1 ? 's' : ''} selected
-                  {' '}({chapters.filter(c => selectedChapterIds.has(c._id)).reduce((s, c) => s + c.weightPercent, 0)}% weight)
-                </p>
-              )}
+              ) : (() => {
+                const selected = chapters.filter(c => selectedChapterIds.has(c._id));
+                const selWeight = selected.reduce((s, c) => s + c.weightPercent, 0);
+                const allZero = selected.every(c => c.weightPercent === 0);
+                return (
+                  <p className="text-xs text-indigo-600">
+                    {selectedChapterIds.size} chapter{selectedChapterIds.size > 1 ? 's' : ''} selected
+                    {allZero
+                      ? ' — weights are 0, questions will be split equally across chapters'
+                      : ` (${selWeight}% weight)`}
+                  </p>
+                );
+              })()}
             </section>
           )}
 
-          {/* Step 3 — Type configurator */}
-          {setId && schemeStep === 'done' && (
+          {/* Step 3 — shown only when no scheme is applied (manual config) */}
+          {setId && schemeStep === 'done' && !activeSchemeId && (
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-800">
-                  <span className="text-indigo-500 mr-2">3</span>Choose question types
-                </h2>
-                <button
-                  onClick={() => setSchemeStep('pending')}
-                  className="text-xs text-gray-400 hover:text-indigo-600 transition-colors"
-                >
-                  Change scheme
-                </button>
-              </div>
+              <h2 className="text-base font-semibold text-gray-800">
+                <span className="text-indigo-500 mr-2">3</span>Configure question types
+              </h2>
               <TypeConfigurator
                 config={typeConfig}
                 onChange={setTypeConfig}
@@ -418,20 +440,89 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {/* Generate button */}
+          {/* Paper structure preview — scheme with paperStructure applied */}
+          {setId && schemeStep === 'done' && isPaperMode && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-gray-800">
+                  <span className="text-indigo-500 mr-2">3</span>Paper structure
+                </h2>
+                <button
+                  onClick={() => setSchemeStep('pending')}
+                  className="text-xs text-gray-400 hover:text-indigo-600 transition-colors"
+                >
+                  Change scheme
+                </button>
+              </div>
+              <PaperView structure={activePaperStructure!} isPreview />
+            </section>
+          )}
+
+          {/* Scheme summary — scheme applied but no paperStructure (flat type list) */}
+          {setId && schemeStep === 'done' && activeSchemeId && !isPaperMode && typeConfig.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-gray-800">
+                  <span className="text-indigo-500 mr-2">3</span>Question types from scheme
+                </h2>
+                <button
+                  onClick={() => setSchemeStep('pending')}
+                  className="text-xs text-gray-400 hover:text-indigo-600 transition-colors"
+                >
+                  Change scheme
+                </button>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
+                {typeConfig.filter(tc => tc.count > 0).map(tc => (
+                  <div key={tc.type} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                    <span className="text-gray-700 capitalize">
+                      {tc.type.replace(/([A-Z])/g, ' $1').trim()}
+                    </span>
+                    <span className="text-gray-500 tabular-nums">
+                      {tc.count} × {tc.marksPerQuestion} marks
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Generate button — shown as soon as scheme step is done */}
           {setId && schemeStep === 'done' && (
-            <button
-              onClick={() => generate(Array.from(selectedChapterIds))}
-              disabled={!canGenerate}
-              className={[
-                'w-full rounded-xl py-3 text-sm font-semibold transition-colors',
-                canGenerate
-                  ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed',
-              ].join(' ')}
-            >
-              {isGenerating ? 'Generating…' : 'Generate Questions'}
-            </button>
+            isPaperMode ? (
+              <>
+                {selectedChapterIds.size === 0 && (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Select at least one chapter to enable paper generation.
+                  </p>
+                )}
+                <button
+                  onClick={() => generatePaper(Array.from(selectedChapterIds))}
+                  disabled={!canGeneratePaper}
+                  className={[
+                    'w-full rounded-xl py-3 text-sm font-semibold transition-colors',
+                    canGeneratePaper
+                      ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed',
+                  ].join(' ')}
+                >
+                  {isPaperGenerating ? 'Generating paper…' : 'Generate Paper'}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => generate(Array.from(selectedChapterIds))}
+                disabled={!canGenerate}
+                className={[
+                  'w-full rounded-xl py-3 text-sm font-semibold transition-colors',
+                  canGenerate
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed',
+                ].join(' ')}
+              >
+                {isGenerating ? 'Generating…' : 'Generate Questions'}
+              </button>
+            )
           )}
 
           {exportError && (
@@ -440,8 +531,28 @@ export default function DashboardPage() {
             </p>
           )}
 
-          {/* Step 4 — Generation progress */}
-          {(isGenerating || hasResults) && (
+          {paperGenerateError && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+              {paperGenerateError}
+            </p>
+          )}
+
+          {/* Paper generation status */}
+          {isPaperMode && paperStats && !isPaperGenerating && (
+            <div className="rounded-xl border border-gray-200 bg-white p-4 flex items-center gap-4 text-sm">
+              <div className="text-gray-500">
+                Slots filled: <span className="font-semibold text-green-700">{paperStats.filledSlots}</span> / {paperStats.totalSlots}
+              </div>
+              {paperStats.failedSlots > 0 && (
+                <div className="text-red-600">
+                  {paperStats.failedSlots} slot{paperStats.failedSlots !== 1 ? 's' : ''} failed
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 4 — Generation progress (non-paper mode only) */}
+          {!isPaperMode && (isGenerating || hasResults) && (
             <section className="space-y-3">
               <h2 className="text-base font-semibold text-gray-800">
                 <span className="text-indigo-500 mr-2">4</span>Generation status
@@ -456,8 +567,29 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {/* Step 5 — Question blocks */}
-          {successBlocks.length > 0 && (
+          {/* Regeneration toast */}
+          {regenToast && (
+            <div className={[
+              'fixed bottom-6 right-6 z-50 rounded-xl px-4 py-3 text-sm font-medium shadow-lg transition-all',
+              regenToast.ok
+                ? 'bg-green-600 text-white'
+                : 'bg-red-600 text-white',
+            ].join(' ')}>
+              {regenToast.msg}
+            </div>
+          )}
+
+          {/* Step 5 — Paper result (paper mode) OR Question blocks (normal mode) */}
+          {isPaperMode && filledPaperStructure && (
+            <section className="space-y-3">
+              <h2 className="text-base font-semibold text-gray-800">
+                <span className="text-indigo-500 mr-2">4</span>Generated paper
+              </h2>
+              <PaperView structure={filledPaperStructure} />
+            </section>
+          )}
+
+          {!isPaperMode && successBlocks.length > 0 && (
             <section className="space-y-3">
               <h2 className="text-base font-semibold text-gray-800">
                 <span className="text-indigo-500 mr-2">5</span>Generated questions
@@ -469,6 +601,10 @@ export default function DashboardPage() {
                     questionType={b.questionType}
                     totalMarks={b.totalMarks}
                     questions={b.questions}
+                    setId={setId}
+                    isRegenerating={isRegenerating[b.questionType as any] ?? false}
+                    onEdit={(qId, updated) => editQuestion(b.questionType as any, qId, updated)}
+                    onRegenerate={() => handleRegenerate(b.questionType)}
                   />
                 ))}
               </div>
@@ -514,7 +650,12 @@ export default function DashboardPage() {
                     className="rounded-xl border border-gray-200 bg-white p-3 space-y-2"
                   >
                     <div>
-                      <p className="text-sm font-medium text-gray-800 truncate">{scheme.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-800 truncate">{scheme.name}</p>
+                        {scheme.paperStructure
+                          ? <span className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">Paper</span>
+                          : null}
+                      </div>
                       <p className="text-xs text-gray-500">
                         {scheme.subject} · {scheme.standard}
                         {scheme.examType ? ` · ${scheme.examType}` : ''}

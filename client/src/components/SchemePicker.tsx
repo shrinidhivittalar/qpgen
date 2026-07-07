@@ -1,10 +1,10 @@
 import { useRef, useState, ChangeEvent } from 'react';
 import { apiFetch } from '../lib/api';
-import type { Scheme, TypeConfig } from '../types';
+import type { Scheme, TypeConfig, PaperStructure } from '../types';
 
 interface Props {
   schemes:       Scheme[];
-  onApply:       (parsedConfig: TypeConfig[], schemeId?: string) => void;
+  onApply:       (parsedConfig: TypeConfig[], schemeId?: string, paperStructure?: PaperStructure | null) => void;
   onSkip:        () => void;
   onSchemeSaved: () => void;
 }
@@ -22,7 +22,7 @@ function SchemeList({
   onUploadNew,
 }: {
   schemes:     Scheme[];
-  onApply:     (parsedConfig: TypeConfig[], schemeId: string) => void;
+  onApply:     (parsedConfig: TypeConfig[], schemeId: string, paperStructure: PaperStructure | null) => void;
   onUploadNew: () => void;
 }) {
   const [selected, setSelected] = useState<string>(schemes[0]?.schemeId ?? '');
@@ -71,7 +71,7 @@ function SchemeList({
       </div>
 
       <button
-        onClick={() => active && onApply(active.parsedConfig as TypeConfig[], active.schemeId)}
+        onClick={() => active && onApply(active.parsedConfig as TypeConfig[], active.schemeId, active.paperStructure ?? null)}
         disabled={!active}
         className="w-full rounded-xl py-2.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
       >
@@ -85,7 +85,7 @@ function SchemeList({
 type UploadPhase =
   | { tag: 'form' }
   | { tag: 'uploading' }
-  | { tag: 'preview'; schemeId: string; suggestedName: string; parsedConfig: TypeConfig[]; previewSections: string[] }
+  | { tag: 'preview'; schemeId: string; suggestedName: string; parsedConfig: TypeConfig[]; previewSections: string[]; paperStructure: PaperStructure | null }
   | { tag: 'saving' };
 
 function SchemeUploadForm({
@@ -96,7 +96,7 @@ function SchemeUploadForm({
 }: {
   hasExistingSchemes: boolean;
   onBack:             () => void;
-  onApply:            (parsedConfig: TypeConfig[], schemeId?: string) => void;
+  onApply:            (parsedConfig: TypeConfig[], schemeId?: string, paperStructure?: PaperStructure | null) => void;
   onSchemeSaved:      () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -140,7 +140,8 @@ function SchemeUploadForm({
 
       const res  = await apiFetch('/api/schemes/upload', { method: 'POST', body: form });
       const body = await res.json() as {
-        schemeId?: string; parsedConfig?: TypeConfig[]; previewSections?: string[]; error?: string;
+        schemeId?: string; parsedConfig?: TypeConfig[]; previewSections?: string[];
+        paperStructure?: PaperStructure | null; error?: string;
       };
 
       if (!res.ok) {
@@ -150,11 +151,12 @@ function SchemeUploadForm({
       }
 
       setPhase({
-        tag:            'preview',
-        schemeId:       body.schemeId!,
-        suggestedName:  autoName,
-        parsedConfig:   body.parsedConfig!,
+        tag:             'preview',
+        schemeId:        body.schemeId!,
+        suggestedName:   autoName,
+        parsedConfig:    body.parsedConfig!,
         previewSections: body.previewSections ?? [],
+        paperStructure:  body.paperStructure ?? null,
       });
     } catch {
       setPhase({ tag: 'form' });
@@ -162,31 +164,25 @@ function SchemeUploadForm({
     }
   }
 
-  async function handleSave(schemeId: string, parsedConfig: TypeConfig[]) {
+  async function handleSave(schemeId: string, parsedConfig: TypeConfig[], paperStructure: PaperStructure | null) {
     setPhase({ tag: 'saving' });
-    // Scheme is already persisted — update name if user changed it
-    if (saveName.trim()) {
-      // Best-effort rename via replace endpoint with same file would be complex;
-      // name was sent at upload time so it's already stored. If user edited the
-      // name field, skip the rename — the scheme record keeps the auto-name.
-    }
     onSchemeSaved();
-    onApply(parsedConfig, schemeId);
+    onApply(parsedConfig, schemeId, paperStructure);
   }
 
-  async function handleSkip(schemeId: string, parsedConfig: TypeConfig[]) {
+  async function handleSkip(schemeId: string, parsedConfig: TypeConfig[], paperStructure: PaperStructure | null) {
     setPhase({ tag: 'saving' });
     try {
       await apiFetch(`/api/schemes/${schemeId}`, { method: 'DELETE' });
     } catch {
       // ignore — worst case a ghost scheme exists, not a blocker
     }
-    onApply(parsedConfig); // no schemeId — scheme was not kept
+    onApply(parsedConfig, undefined, paperStructure); // no schemeId — scheme was not kept
   }
 
   // ── preview phase ──────────────────────────────────────────────────────────
   if (phase.tag === 'preview') {
-    const { schemeId, parsedConfig, previewSections } = phase;
+    const { schemeId, parsedConfig, previewSections, paperStructure } = phase;
     const isSaving = false;
 
     return (
@@ -220,14 +216,14 @@ function SchemeUploadForm({
           />
           <div className="flex gap-2">
             <button
-              onClick={() => handleSave(schemeId, parsedConfig)}
+              onClick={() => handleSave(schemeId, parsedConfig, paperStructure)}
               disabled={isSaving}
               className="flex-1 rounded-xl py-2 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
             >
               Save
             </button>
             <button
-              onClick={() => handleSkip(schemeId, parsedConfig)}
+              onClick={() => handleSkip(schemeId, parsedConfig, paperStructure)}
               disabled={isSaving}
               className="flex-1 rounded-xl py-2 text-sm font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-60 transition-colors"
             >
@@ -335,7 +331,7 @@ export default function SchemePicker({ schemes, onApply, onSkip, onSchemeSaved }
       ) : (
         <SchemeList
           schemes={schemes}
-          onApply={(parsedConfig, schemeId) => onApply(parsedConfig, schemeId)}
+          onApply={(parsedConfig, schemeId, paperStructure) => onApply(parsedConfig, schemeId, paperStructure)}
           onUploadNew={() => setUploadMode(true)}
         />
       )}

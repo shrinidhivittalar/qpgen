@@ -185,20 +185,29 @@ describe('SortingSchema', () => {
 // trueFalse
 // ────────────────────────────────────────────────────────────────────────────
 describe('TrueFalseSchema', () => {
+  // T/F question text must be a declarative statement (not a question)
+  const tfBase = {
+    ...baseQuestion,
+    question: { hide_text: false, text: 'Machine learning is a subset of artificial intelligence.', read_text: false, image: '' },
+  };
+
   it('accepts a valid trueFalse question with boolean correctAnswer', () => {
+    const result = TrueFalseSchema.safeParse({ ...tfBase, correctAnswer: true });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a trueFalse question whose text ends with ? (EC-GEN-20 declarative rule)', () => {
     const result = TrueFalseSchema.safeParse({
-      ...baseQuestion,
+      ...tfBase,
+      question: { ...tfBase.question, text: 'What is machine learning?' },
       correctAnswer: true,
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   // EC-GEN-20: string "true" must fail — never coerce
   it('rejects string "true" as correctAnswer (EC-GEN-20)', () => {
-    const result = TrueFalseSchema.safeParse({
-      ...baseQuestion,
-      correctAnswer: 'true',
-    });
+    const result = TrueFalseSchema.safeParse({ ...tfBase, correctAnswer: 'true' });
     expect(result.success).toBe(false);
   });
 });

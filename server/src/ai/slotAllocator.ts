@@ -36,17 +36,25 @@ export async function allocateSlots(
   marksPerQuestion:  number,
   chapters:          ChapterInput[],
   explicitDifficulty?: Difficulty,
+  typeIndex:         number = 0,
 ): Promise<Slot[]> {
   if (chapters.length === 0) {
     return allocateWithoutChapters(type, count, marksPerQuestion, explicitDifficulty);
   }
 
-  const weights          = chapters.map(c => c.weightPercent);
+  // Rotate the chapter list by typeIndex positions so each type draws from
+  // different chapters when counts are small. Without rotation, all types
+  // get allocated to the same first N chapters (largest-remainder is
+  // deterministic for equal weights), producing questions on the same topic.
+  const rotateBy = chapters.length > 1 ? typeIndex % chapters.length : 0;
+  const rotated  = [...chapters.slice(rotateBy), ...chapters.slice(0, rotateBy)];
+
+  const weights          = rotated.map(c => c.weightPercent);
   const perChapterCounts = allocateByWeight(count, weights);
 
   const slots: Slot[] = [];
-  for (let i = 0; i < chapters.length; i++) {
-    const chapter      = chapters[i];
+  for (let i = 0; i < rotated.length; i++) {
+    const chapter      = rotated[i];
     const chapterCount = perChapterCounts[i];
     if (chapterCount === 0) continue;
 

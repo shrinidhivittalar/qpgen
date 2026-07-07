@@ -6,9 +6,11 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { extractSchemeText } from '../ai/extractor.js';
 import { parseSchemeBlueprint, TypeConfig } from '../ai/schemeParser.js';
+import { inferPaperStructure } from '../ai/paperBlueprintParser.js';
 import Scheme from '../models/Scheme.js';
 import { logger } from '../lib/logger.js';
 import { ExamBlueprint, blueprintToTypeConfig } from '../validation/schemas/examBlueprint.js';
+import type { PaperStructure } from '../types/paperStructure.js';
 
 const router = Router();
 
@@ -126,7 +128,12 @@ router.post('/upload', async (req: Request, res: Response) => {
     standard: standard.trim(),
     examType: examType?.trim() ?? '',
   };
-  const parsed = await runParseScheme(rawText, res, metadata);
+  // Run blueprint parse and paper structure extraction in parallel.
+  // Paper structure extraction failure is non-blocking.
+  const [parsed, paperStructureResult] = await Promise.all([
+    runParseScheme(rawText, res, metadata),
+    inferPaperStructure(rawText).catch((): PaperStructure | null => null),
+  ]);
   if (!parsed) return;
   const { parsedConfig, examBlueprint } = parsed;
 
@@ -139,26 +146,29 @@ router.post('/upload', async (req: Request, res: Response) => {
     rawText,
     parsedConfig,
     examBlueprint,
+    paperStructure: paperStructureResult ?? null,
     fileType,
   });
 
   logger.info('scheme_uploaded', {
-    requestId: (req as any).requestId,
-    userId: (req as any).userId,
-    schemeId: scheme._id.toString(),
+    requestId:          (req as any).requestId,
+    userId:             (req as any).userId,
+    schemeId:           scheme._id.toString(),
     fileType,
-    typesFound: parsedConfig.length,
-    sectionsFound: examBlueprint.sections.length,
+    typesFound:         parsedConfig.length,
+    sectionsFound:      examBlueprint.sections.length,
+    paperStructureParsed: paperStructureResult !== null,
   });
 
   res.status(201).json({
-    schemeId: scheme._id.toString(),
-    name: scheme.name,
-    subject: scheme.subject,
-    standard: scheme.standard,
-    examType: scheme.examType,
+    schemeId:       scheme._id.toString(),
+    name:           scheme.name,
+    subject:        scheme.subject,
+    standard:       scheme.standard,
+    examType:       scheme.examType,
     parsedConfig,
     examBlueprint,
+    paperStructure: paperStructureResult ?? null,
     previewSections: toPreviewSections(parsedConfig),
   });
 });
@@ -172,15 +182,16 @@ router.get('/', async (req: Request, res: Response) => {
 
   res.json(
     schemes.map(s => ({
-      schemeId: s._id.toString(),
-      name: s.name,
-      subject: s.subject,
-      standard: s.standard,
-      examType: s.examType,
-      fileType: s.fileType,
-      parsedConfig: s.parsedConfig,
-      examBlueprint: s.examBlueprint ?? null,
-      updatedAt: s.updatedAt,
+      schemeId:       s._id.toString(),
+      name:           s.name,
+      subject:        s.subject,
+      standard:       s.standard,
+      examType:       s.examType,
+      fileType:       s.fileType,
+      parsedConfig:   s.parsedConfig,
+      examBlueprint:  s.examBlueprint ?? null,
+      paperStructure: (s as any).paperStructure ?? null,
+      updatedAt:      s.updatedAt,
     })),
   );
 });
@@ -202,16 +213,17 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 
   res.json({
-    schemeId: scheme._id.toString(),
-    name: scheme.name,
-    subject: scheme.subject,
-    standard: scheme.standard,
-    examType: scheme.examType,
-    fileType: scheme.fileType,
-    parsedConfig: scheme.parsedConfig,
-    examBlueprint: scheme.examBlueprint ?? null,
-    rawText: scheme.rawText,
-    updatedAt: scheme.updatedAt,
+    schemeId:       scheme._id.toString(),
+    name:           scheme.name,
+    subject:        scheme.subject,
+    standard:       scheme.standard,
+    examType:       scheme.examType,
+    fileType:       scheme.fileType,
+    parsedConfig:   scheme.parsedConfig,
+    examBlueprint:  scheme.examBlueprint ?? null,
+    paperStructure: (scheme as any).paperStructure ?? null,
+    rawText:        scheme.rawText,
+    updatedAt:      scheme.updatedAt,
   });
 });
 
@@ -243,7 +255,10 @@ router.patch('/:id/replace', async (req: Request, res: Response) => {
     examType: examType !== undefined ? examType?.trim() ?? '' : existing.examType,
   };
 
-  const parsed = await runParseScheme(rawText, res, metadata);
+  const [parsed, paperStructureResult] = await Promise.all([
+    runParseScheme(rawText, res, metadata),
+    inferPaperStructure(rawText).catch((): PaperStructure | null => null),
+  ]);
   if (!parsed) return;
   const { parsedConfig, examBlueprint } = parsed;
 
@@ -252,21 +267,23 @@ router.patch('/:id/replace', async (req: Request, res: Response) => {
   existing.standard = metadata.standard;
   existing.examType = metadata.examType;
   existing.rawText = rawText;
-  existing.parsedConfig = parsedConfig as any;
+  existing.parsedConfig  = parsedConfig as any;
   existing.examBlueprint = examBlueprint as any;
+  (existing as any).paperStructure = paperStructureResult ?? null;
   existing.fileType = fileType;
   await existing.save();
 
   res.json({
-    schemeId: existing._id.toString(),
-    name: existing.name,
-    subject: existing.subject,
-    standard: existing.standard,
-    examType: existing.examType,
-    fileType: existing.fileType,
+    schemeId:       existing._id.toString(),
+    name:           existing.name,
+    subject:        existing.subject,
+    standard:       existing.standard,
+    examType:       existing.examType,
+    fileType:       existing.fileType,
     parsedConfig,
     examBlueprint,
-    updatedAt: existing.updatedAt,
+    paperStructure: paperStructureResult ?? null,
+    updatedAt:      existing.updatedAt,
   });
 });
 

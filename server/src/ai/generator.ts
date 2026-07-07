@@ -174,8 +174,9 @@ export async function generateTypeViaSlots(
   tone:               ToneOption,
   bankId:             string | undefined,
   limiter:            ReturnType<typeof createLimiter>,
+  typeIndex:          number = 0,
 ): Promise<{ questions: object[]; requested: number; received: number }> {
-  const slots = await allocateSlots(type, count, marksPerQuestion, chapters, explicitDifficulty);
+  const slots = await allocateSlots(type, count, marksPerQuestion, chapters, explicitDifficulty, typeIndex);
 
   const settled = await Promise.allSettled(
     slots.map(slot =>
@@ -202,7 +203,7 @@ export async function generateTypeViaSlots(
           1,
           marksPerQuestion,
           slotGenerateFn,
-          { difficulty: slot.difficulty, strategyContext: { strategy, baseQuestion } },
+          { strategyContext: { strategy, baseQuestion } },
         );
       }),
     ),

@@ -9,6 +9,13 @@ export async function withTimeout<T>(fn: () => Promise<T>, ms: number, label: st
   ]);
 }
 
+// Parse "Please try again in 2.548s" from Groq 429 bodies.
+function parseRetryAfterMs(err: unknown): number | null {
+  const msg = String(err);
+  const match = msg.match(/[Pp]lease try again in (\d+(?:\.\d+)?)s/);
+  return match ? Math.ceil(parseFloat(match[1]) * 1000) + 200 : null;
+}
+
 export async function withRetry<T>(
   fn: () => Promise<T>,
   maxAttempts: number,
@@ -21,7 +28,8 @@ export async function withRetry<T>(
     } catch (err) {
       lastErr = err;
       if (attempt === maxAttempts || !isRetryable(err)) throw err;
-      const backoffMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s (GEN-23)
+      const retryAfterMs = parseRetryAfterMs(err);
+      const backoffMs = retryAfterMs ?? 1000 * Math.pow(2, attempt - 1);
       logger.warn('groq_retry', { attempt, backoffMs, error: String(err) });
       await new Promise(r => setTimeout(r, backoffMs));
     }

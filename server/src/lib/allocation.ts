@@ -11,9 +11,11 @@ export function allocateByWeight(total: number, weights: number[]): number[] {
   if (total === 0 || weights.length === 0) return weights.map(() => 0);
 
   const sum = weights.reduce((a, b) => a + b, 0);
-  if (sum === 0) return weights.map(() => 0);
 
-  const normalized = weights.map(w => w / sum);
+  // When all weights are 0 (teacher skipped the field), distribute evenly.
+  const normalized = sum === 0
+    ? weights.map(() => 1 / weights.length)
+    : weights.map(w => w / sum);
   const raw        = normalized.map(w => total * w);
   const floors     = raw.map(Math.floor);
 

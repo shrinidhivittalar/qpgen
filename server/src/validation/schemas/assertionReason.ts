@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 const ASSERTION_OPTIONS = [
-  'Both (A) and (R) are true and (R) is the correct explanation of (A).',
-  'Both (A) and (R) are true, but (R) is not the correct explanation of (A).',
-  '(A) is true, but (R) is false.',
-  '(A) is false, but (R) is true.',
+  'Both A and R are correct, and R is the correct explanation of A',
+  'Both A and R are correct, but R is not the correct explanation of A',
+  'A is correct, but R is incorrect',
+  'A is incorrect, but R is correct',
 ] as const;
 
 export const AssertionReasonSchema = z.object({

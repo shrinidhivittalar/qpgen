@@ -62,7 +62,8 @@ function makeQuestion(type: string, idx: number, marks = 1): object {
         { hide_text: false, text: 'Option B', read_text: false, image: '' },
       ], correctAnswer: ['Option A'] };
     case 'trueFalse':
-      return { ...base, correctAnswer: true };
+      // T/F schema requires a declarative statement (no '?' at end)
+      return { ...base, question: { hide_text: false, text: `Statement ${idx} is true.`, read_text: false, image: '' }, correctAnswer: true };
     case 'matchTheFollowing':
       return { ...base, leftItems: ['Term A'], rightItems: ['Def 1'], correctAnswer: [{ left: 'Term A', right: 'Def 1' }] };
     case 'reordering':

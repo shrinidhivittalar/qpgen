@@ -152,7 +152,7 @@ export async function inferExamBlueprint(
         model: process.env.GROQ_MODEL ?? 'llama-4-maverick-17b-128e-instruct',
         messages: [
           { role: 'system', content: BLUEPRINT_PROMPT },
-          { role: 'user', content: `${metadataText}\n\nDOCUMENT TEXT:\n${rawText.slice(0, 12000)}` },
+          { role: 'user', content: `${metadataText}\n\nDOCUMENT TEXT:\n${rawText.slice(0, 40000)}` },
         ],
         temperature: 0.2,
       }),
