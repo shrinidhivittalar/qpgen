@@ -46,7 +46,7 @@ export const ExamBlueprintSchema = z.object({
   durationMinutes:    z.number().int().positive().optional(),
   totalMarks:         z.number().positive(),
   tone:               ToneOption.default('formal-board-exam'),
-  difficultyDefault:  DifficultyLevel.default('moderate'),
+  difficultyDefault:  DifficultyLevel.nullish(),
   chapters:           z.array(BlueprintChapterSchema).default([]),
   sections:           z.array(BlueprintSectionSchema).min(1),
   globalInstructions: z.array(z.string()).default([]),

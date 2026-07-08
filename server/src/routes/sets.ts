@@ -33,7 +33,7 @@ const TypeConfigItemSchema = z.object({
   type:             z.string(),
   count:            z.number().int().min(0),
   marksPerQuestion: z.number().positive(),
-  difficulty:       DifficultyLevel.optional(),
+  difficulty:       DifficultyLevel.nullish(),
 });
 
 const GenerateBodySchema = z.object({
@@ -41,8 +41,8 @@ const GenerateBodySchema = z.object({
   chapterIds:        z.array(z.string()).optional(),
   schemeId:          z.string().optional(),
   bankId:            z.string().optional(),
-  difficultyDefault: DifficultyLevel.optional(),
-  tone:              ToneOption.optional(),
+  difficultyDefault: DifficultyLevel.nullish(),
+  tone:              ToneOption.nullish(),
 });
 
 const RegenerateBodySchema = z.object({
