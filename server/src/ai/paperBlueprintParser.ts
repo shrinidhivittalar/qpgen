@@ -52,16 +52,17 @@ Field rules:
 - "instructions" on a section: include any printed instruction line for that section.
 
 Type mapping — pick the closest match for each question:
-- multipleChoice   → MCQ, choose the correct/best option, objective questions with one answer
-- multiSelect      → choose all correct options, multiple correct, select all that apply
-- fillInBlanks     → fill in the blank, complete the sentence, one-word answer
-- trueFalse        → true/false, correct/incorrect, right/wrong statement
+- multipleChoice    → MCQ, choose the correct/best option, objective questions with one answer
+- multiSelect       → choose all correct options, multiple correct, select all that apply
+- fillInBlanks      → fill in the blank, complete the sentence, one-word answer
+- trueFalse         → true/false, correct/incorrect, right/wrong statement
 - matchTheFollowing → match the following, match columns, pair items
-- reordering       → arrange in order, sequence steps, put in order
-- sorting          → classify into groups, categorize, sort items
-- assertionReason  → assertion-reason, statement A and reason R
-- shortAnswer      → short answer (2–5 marks), written explanation
-- longAnswer       → long answer (4+ marks), case study, extended question with sub-parts
+- reordering        → arrange in order, sequence steps, put in order
+- sorting           → classify into groups, categorize, sort items
+- assertionReason   → assertion-reason, statement A and reason R
+- shortAnswer       → short answer (2–5 marks), written explanation
+- longAnswer        → long answer (4+ marks), case study, extended question with sub-parts
+- figureBased       → diagram-based, figure-based, image-based, picture-based questions; questions that refer to a labelled diagram, chart, or map image provided alongside the question
 
 Additional rules:
 - List every numbered question as a separate entry in "questions".

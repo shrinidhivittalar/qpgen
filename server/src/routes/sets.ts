@@ -26,7 +26,8 @@ const router = Router();
 
 const VALID_TYPES = [
   'fillInBlanks', 'multipleChoice', 'multiSelect', 'matchTheFollowing',
-  'reordering', 'sorting', 'trueFalse', 'assertionReason', 'shortAnswer', 'longAnswer',
+  'reordering', 'sorting', 'trueFalse', 'assertionReason', 'shortAnswer', 'longAnswer', 'mapSkill',
+  'figureBased',
 ] as const;
 
 const TypeConfigItemSchema = z.object({
@@ -34,6 +35,7 @@ const TypeConfigItemSchema = z.object({
   count:            z.number().int().min(0),
   marksPerQuestion: z.number().positive(),
   difficulty:       DifficultyLevel.nullish(),
+  mapItems:         z.array(z.string()).optional(),
 });
 
 const GenerateBodySchema = z.object({
@@ -103,7 +105,8 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
     }
   }
 
-  const { difficultyDefault, tone, bankId, chapterIds } = bodyResult.data;
+  const { difficultyDefault, tone: toneRaw, bankId, chapterIds } = bodyResult.data;
+  const tone = toneRaw ?? undefined;
 
   // Leave difficulty undefined when neither per-type nor global default is set —
   // the difficulty filter in validateQuestionBlock only runs when explicitly requested.
@@ -150,7 +153,7 @@ router.post('/:id/generate', requireRole('teacher'), async (req: Request, res: R
             tc.type, tc.count, tc.marksPerQuestion, resolvedChapters,
             tc.difficulty ?? undefined,
             userId, tone ?? 'formal-board-exam', bankId ?? undefined, limiter,
-            typeIndex,
+            typeIndex, (tc as any).mapItems,
           ).then(r => ({ type: tc.type, marksPerQuestion: tc.marksPerQuestion, ...r })),
         ),
       );
@@ -464,10 +467,17 @@ router.post('/:id/regenerate', requireRole('teacher'), async (req: Request, res:
 // provided in the request body). Fills every question slot and stores the
 // filled structure back into the QuestionSet.
 
+const FigureImageSchema = z.object({
+  base64:   z.string().min(1),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+  filename: z.string().optional(),
+});
+
 const GeneratePaperBodySchema = z.object({
   paperStructure: z.record(z.unknown()),  // validated as PaperStructure below
   chapterIds:     z.array(z.string()).min(1),
   tone:           ToneOption.optional(),
+  figureImages:   z.array(FigureImageSchema).max(20).optional(),
 });
 
 router.post('/:id/generate-paper', requireRole('teacher'), async (req: Request, res: Response) => {
@@ -489,7 +499,7 @@ router.post('/:id/generate-paper', requireRole('teacher'), async (req: Request, 
     res.status(400).json({ error: 'Invalid paperStructure: ' + (structureResult.error.issues[0]?.message ?? 'validation failed') }); return;
   }
 
-  const { chapterIds, tone } = bodyResult.data;
+  const { chapterIds, tone, figureImages } = bodyResult.data;
   const validIds = chapterIds.filter(id => mongoose.isValidObjectId(id));
   if (validIds.length === 0) {
     res.status(400).json({ error: 'No valid chapter IDs provided.' }); return;
@@ -517,6 +527,7 @@ router.post('/:id/generate-paper', requireRole('teacher'), async (req: Request, 
       structureResult.data,
       resolvedChapters,
       { teacherId: userId, tone: tone ?? 'formal-board-exam', requestId: (req as any).requestId },
+      figureImages ?? [],
     );
   } catch {
     res.status(503).json({ error: 'AI service unavailable. Please try again.' }); return;

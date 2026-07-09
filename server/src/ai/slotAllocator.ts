@@ -1,6 +1,14 @@
 import { QuestionType } from '../validation/schemaMap.js';
 import { allocateByWeight } from '../lib/allocation.js';
 
+// Types that need a larger excerpt window to find enough content.
+// mapSkill needs many distinct geographical places, which requires more context
+// than a single-concept MCQ or short-answer question.
+const WINDOW_SIZE: Partial<Record<QuestionType, number>> = {
+  mapSkill:   5000,
+  longAnswer: 3000,
+};
+
 export type Slot = {
   chapterId:        string | null;
   chapterName:      string;
@@ -62,6 +70,7 @@ export async function allocateSlots(
       ? Array<Difficulty>(chapterCount).fill(explicitDifficulty)
       : expandDistribution(chapterCount, DIFFICULTY_DISTRIBUTION);
 
+    const windowSize = WINDOW_SIZE[type] ?? 2000;
     for (let j = 0; j < chapterCount; j++) {
       slots.push({
         chapterId:        chapter.id,
@@ -69,7 +78,7 @@ export async function allocateSlots(
         type,
         difficulty:       difficulties[j],
         marksPerQuestion,
-        sourceExcerpt:    pickExcerpt(chapter.sourceText, chapter.highValueSnippets, j),
+        sourceExcerpt:    pickExcerpt(chapter.sourceText, chapter.highValueSnippets, j, windowSize),
       });
     }
   }
@@ -92,6 +101,7 @@ export function pickExcerpt(
   fullText:          string,
   highValueSnippets: string[],
   slotIndex:         number,
+  windowSize:        number = 2000,
 ): string {
   if (highValueSnippets.length > 0) {
     const snippet = highValueSnippets[slotIndex % highValueSnippets.length];
@@ -105,9 +115,8 @@ export function pickExcerpt(
     // with slight edits) — fall through to the rotating window below
   }
 
-  const windowSize = 2000;
-  const maxStart   = Math.max(1, fullText.length - windowSize);
-  const start      = (slotIndex * 700) % maxStart;
+  const maxStart = Math.max(1, fullText.length - windowSize);
+  const start    = (slotIndex * Math.floor(windowSize * 0.35)) % maxStart;
   return fullText.slice(start, start + windowSize);
 }
 

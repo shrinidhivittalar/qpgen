@@ -2,6 +2,12 @@ import { useState, useCallback } from 'react';
 import { apiFetch } from '../lib/api';
 import type { TypeConfig, TypeResult, QuestionType, DifficultyLevel, ToneOption, PaperStructure } from '../types';
 
+export interface FigureImageEntry {
+  base64:   string;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+  filename: string;
+}
+
 export interface GenerationState {
   setId:                  string | null;
   fileName:               string | null;
@@ -15,6 +21,7 @@ export interface GenerationState {
   isPaperGenerating:      boolean;
   paperGenerateError:     string | null;
   paperStats:             { totalSlots: number; filledSlots: number; failedSlots: number } | null;
+  figureImages:           FigureImageEntry[];
   difficultyDefault: DifficultyLevel;
   tone:              ToneOption;
   bankId:            string | null;
@@ -35,6 +42,8 @@ const emptyResults = (): Record<QuestionType, TypeResult> => ({
   assertionReason:   { status: 'idle' },
   shortAnswer:       { status: 'idle' },
   longAnswer:        { status: 'idle' },
+  mapSkill:          { status: 'idle' },
+  figureBased:       { status: 'idle' },
 });
 
 export function useGeneration() {
@@ -50,6 +59,7 @@ export function useGeneration() {
     isPaperGenerating:      false,
     paperGenerateError:     null,
     paperStats:             null,
+    figureImages:           [],
     difficultyDefault:      'moderate',
     tone:                   'formal-board-exam',
     bankId:                 null,
@@ -293,6 +303,29 @@ export function useGeneration() {
     }
   }, [state.setId]);
 
+  // Reads File objects → base64 and appends to figureImages state.
+  const addFigureImages = useCallback(async (files: FileList | File[]): Promise<void> => {
+    const entries: FigureImageEntry[] = await Promise.all(
+      Array.from(files).map(file => new Promise<FigureImageEntry>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => {
+          const dataUrl = reader.result as string;
+          // data:<mimeType>;base64,<data>
+          const [header, base64] = dataUrl.split(',');
+          const mimeType = header.replace('data:', '').replace(';base64', '') as FigureImageEntry['mimeType'];
+          resolve({ base64, mimeType, filename: file.name });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      })),
+    );
+    setState(s => ({ ...s, figureImages: [...s.figureImages, ...entries] }));
+  }, []);
+
+  const removeFigureImage = useCallback((index: number): void => {
+    setState(s => ({ ...s, figureImages: s.figureImages.filter((_, i) => i !== index) }));
+  }, []);
+
   const generatePaper = useCallback(async (chapterIds: string[]): Promise<void> => {
     setState(s => ({
       ...s,
@@ -313,10 +346,16 @@ export function useGeneration() {
         setState(s => ({ ...s, setId }));
       }
 
+      const { figureImages } = state;
       const res = await apiFetch(`/api/sets/${setId}/generate-paper`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ paperStructure: activePaperStructure, chapterIds, tone }),
+        body:    JSON.stringify({
+          paperStructure: activePaperStructure,
+          chapterIds,
+          tone,
+          ...(figureImages.length > 0 ? { figureImages } : {}),
+        }),
       });
 
       const body = await res.json() as {
@@ -362,6 +401,7 @@ export function useGeneration() {
       isPaperGenerating:      false,
       paperGenerateError:     null,
       paperStats:             null,
+      figureImages:           [],
       difficultyDefault:      'moderate',
       tone:                   'formal-board-exam',
       bankId:                 null,
@@ -381,6 +421,8 @@ export function useGeneration() {
     applyScheme,
     generate,
     generatePaper,
+    addFigureImages,
+    removeFigureImage,
     editQuestion,
     regenerateType,
     reset,

@@ -1,13 +1,24 @@
 import Groq from 'groq-sdk';
 import { withRetry, withTimeout } from '../lib/retry.js';
+import { groqAcquire } from '../lib/groqLimiter.js';
 import { buildLongAnswerPrompt } from './prompts.js';
 import { parseAiJsonArray } from './generator.js';
 import { schemaMap, QuestionType } from '../validation/schemaMap.js';
 import { LongAnswerSchema } from '../validation/schemas/longAnswer.js';
+import { FigureBasedSchema } from '../validation/schemas/figureBased.js';
 import { createLimiter } from '../lib/concurrency.js';
 import { logger } from '../lib/logger.js';
 import type { PaperStructure, PaperQuestion, PaperSection } from '../types/paperStructure.js';
 import type { ChapterInput } from './slotAllocator.js';
+
+export interface FigureImage {
+  base64:   string;
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+  filename?: string;
+}
+
+// Vision calls consume ~2× the tokens of a text call (image input + text).
+const VISION_TOKEN_ESTIMATE = 5_000;
 
 let _groq: Groq | null = null;
 function getGroq(): Groq {
@@ -33,6 +44,10 @@ function buildSlotSystemPrompt(type: QuestionType, marks: number, tone: string):
     matchTheFollowing:`[{"marks":${m},"question":${q},"leftItems":["Term 1","Term 2","Term 3"],"rightItems":["Def 1","Def 2","Def 3","Distractor"],"correctAnswer":[{"left":"Term 1","right":"Def 1"},{"left":"Term 2","right":"Def 2"},{"left":"Term 3","right":"Def 3"}],"explanation":"why these pairs"}]`,
     reordering:       `[{"marks":${m},"question":${q},"items":["Step C","Step A","Step B"],"correctAnswer":["Step A","Step B","Step C"],"explanation":"why this order"}]`,
     sorting:          `[{"marks":${m},"question":${q},"categories":["Cat A","Cat B"],"items":["item1","item2","item3","item4"],"correctAnswer":{"Cat A":["item1","item3"],"Cat B":["item2","item4"]},"explanation":"why"}]`,
+    mapSkill:         `[{"marks":${m},"instruction":"Mark any ${m} of the following on the outline map provided.","items":["Place 1","Place 2","Place 3","Place 4","Place 5","Place 6","Place 7"],"totalToAttempt":${m},"modelAnswer":["Place 1 — description of its location","Place 2 — description of its location","Place 3 — description of its location","Place 4 — description of its location","Place 5 — description of its location","Place 6 — description of its location","Place 7 — description of its location"],"explanation":"Tests geographical knowledge and spatial awareness"}]`,
+    // figureBased is generated via the vision path — this schema is shown only as a
+    // fallback reference if the text path is ever called for this type.
+    figureBased:      `{"marks":${m},"questionText":"question about the figure","subType":"mcq","options":["option A","option B","option C","option D"],"correctAnswer":"option A","useLatex":false,"explanation":"why A is correct"}`,
   };
 
   const schema = schemaMap[type] ?? schemaMap.shortAnswer!;
@@ -102,6 +117,141 @@ function pickExcerpt(sourceText: string, offsetIndex: number, windowSize = 2000,
   return sourceText.slice(start, start + windowSize);
 }
 
+// Vision-based generation: sends the figure image + instruction to the multimodal model.
+// The LLM returns a FigureBasedSchema-compatible JSON object (without imageBase64/imageMimeType).
+// We inject those fields server-side after the call.
+async function generateFigureQuestion(
+  question:   PaperQuestion,
+  figure:     FigureImage,
+  options:    PaperGenerateOptions,
+  requestId?: string,
+): Promise<object | null> {
+  const m       = question.marks;
+  const subType = m >= 3 ? 'shortAnswer' : 'mcq';
+
+  // Dev mock — set GROQ_MOCK_FIGURE=true in server/.env to skip the real vision
+  // call during development. Returns a realistic LaTeX-bearing fixture so the
+  // full pipeline (validation → storage → rendering → Word export) can be tested
+  // without consuming any API tokens.
+  if (process.env.GROQ_MOCK_FIGURE === 'true') {
+    const isMcq = subType === 'mcq';
+    return {
+      marks:         m,
+      imageBase64:   figure.base64,
+      imageMimeType: figure.mimeType,
+      questionText:  isMcq
+        ? `In the given figure, if $\\angle A + \\angle B = 90°$, then $\\angle A$ and $\\angle B$ are called:`
+        : `The figure shows a right triangle with legs $a$ and $b$ and hypotenuse $c$. Using the Pythagorean theorem $a^2 + b^2 = c^2$, find $c$ when $a = 3$ cm and $b = 4$ cm. Show your working.`,
+      subType,
+      ...(isMcq ? {
+        options: [
+          'Complementary angles',
+          'Supplementary angles',
+          'Vertically opposite angles',
+          'Co-interior angles',
+        ],
+        correctAnswer: 'Complementary angles',
+      } : {
+        correctAnswer: `$c = \\sqrt{a^2 + b^2} = \\sqrt{9 + 16} = \\sqrt{25} = 5$ cm. The hypotenuse is 5 cm.`,
+      }),
+      useLatex:    true,
+      explanation: isMcq
+        ? 'Two angles that sum to $90°$ are complementary by definition. Supplementary angles sum to $180°$.'
+        : 'Substituting into $a^2 + b^2 = c^2$: $3^2 + 4^2 = 9 + 16 = 25$, so $c = \\sqrt{25} = 5$ cm.',
+    };
+  }
+
+  const system = `[QUESTION_TYPE:figureBased]
+You are a question paper setter. Analyze the provided figure carefully and generate exactly 1 question worth ${m} mark${m !== 1 ? 's' : ''}.
+
+Return ONLY a raw JSON object — no markdown, no array wrapper, no extra fields:
+{
+  "questionText": "question stem referencing the figure (use $LaTeX$ for math, e.g. $x^2$, $\\\\frac{a}{b}$)",
+  "subType": "${subType}",
+  ${subType === 'mcq'
+    ? '"options": ["Option A", "Option B", "Option C", "Option D"],'
+    : ''}
+  "correctAnswer": "${subType === 'mcq' ? 'exact text of the correct option' : 'model answer prose'}",
+  "useLatex": false,
+  "explanation": "why the answer is correct, addressing the most likely wrong interpretation",
+  "marks": ${m}
+}
+
+Rules:
+- Base the question ONLY on what is visible in the figure — do not invent unlabeled parts.
+- For math/science: use $...$ for inline LaTeX. Set "useLatex": true if ANY math appears.
+- subType "${subType}" is mandatory — do not change it.
+${subType === 'mcq'
+  ? '- Exactly 4 options. correctAnswer must be character-for-character identical to one option text.\n- All distractors must be plausible given the figure content.'
+  : '- Omit "options" entirely.\n- correctAnswer is exam-quality model answer prose.'}
+- explanation must state the specific reason, not merely restate the answer.`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      // Vision calls consume more tokens — reserve a higher estimate.
+      await groqAcquire(VISION_TOKEN_ESTIMATE);
+
+      const response = await withRetry(
+        () => withTimeout(
+          () => getGroq().chat.completions.create({
+            model: GROQ_MODEL,
+            messages: [
+              { role: 'system', content: system },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: `data:${figure.mimeType};base64,${figure.base64}` },
+                  },
+                  {
+                    type: 'text',
+                    text: `Generate a ${m}-mark ${subType} question about this figure.`,
+                  },
+                ] as any,
+              },
+            ],
+            temperature: 0.7,
+          }),
+          45_000,
+          `paperGen:figureBased:q${question.number}`,
+        ),
+        2,
+      );
+
+      const raw    = response.choices[0]?.message?.content ?? '';
+      const parsed = parseJsonObject(raw);
+      const result = FigureBasedSchema.safeParse(parsed);
+
+      if (result.success) {
+        return {
+          ...result.data,
+          imageBase64:   figure.base64,
+          imageMimeType: figure.mimeType,
+          marks:         m,
+        };
+      }
+
+      logger.info('paper_gen_validation_fail', {
+        requestId,
+        questionNumber: question.number,
+        type: 'figureBased',
+        attempt,
+        issues: result.error.issues.slice(0, 2).map(i => i.message),
+      });
+    } catch (err) {
+      logger.warn('paper_gen_figure_error', {
+        requestId,
+        questionNumber: question.number,
+        type: 'figureBased',
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return null;
+}
+
 async function generateObjectiveQuestion(
   question:    PaperQuestion,
   chapter:     ChapterInput,
@@ -118,6 +268,7 @@ async function generateObjectiveQuestion(
       const system = buildSlotSystemPrompt(type, question.marks, options.tone ?? 'formal-board-exam');
       const user   = `SOURCE TEXT:\n${excerpt}`;
 
+      await groqAcquire();
       const response = await withRetry(
         () => withTimeout(
           () => getGroq().chat.completions.create({
@@ -181,6 +332,7 @@ async function generateLongAnswerQuestion(
         subPartCount,
       });
 
+      await groqAcquire();
       const response = await withRetry(
         () => withTimeout(
           () => getGroq().chat.completions.create({
@@ -239,12 +391,19 @@ export interface PaperGenerateResult {
   tokensEstimate: number;
 }
 
+// Round-robin picker for figure images across figureBased slots.
+function pickFigure(figures: FigureImage[], index: number): FigureImage | null {
+  if (figures.length === 0) return null;
+  return figures[index % figures.length];
+}
+
 // Deep-clone the structure and fill each question slot in parallel
-// (max 3 concurrent Groq calls via limiter).
+// (max 2 concurrent Groq calls via limiter).
 export async function generatePaper(
-  structure:  PaperStructure,
-  chapters:   ChapterInput[],
-  options:    PaperGenerateOptions,
+  structure:    PaperStructure,
+  chapters:     ChapterInput[],
+  options:      PaperGenerateOptions,
+  figureImages: FigureImage[] = [],
 ): Promise<PaperGenerateResult> {
   if (chapters.length === 0) throw new Error('At least one chapter is required.');
 
@@ -275,18 +434,29 @@ export async function generatePaper(
   });
 
   const limiter = createLimiter(2);
-  let filledSlots = 0;
-  let failedSlots = 0;
+  let filledSlots  = 0;
+  let failedSlots  = 0;
+  let figureSlotIdx = 0;
 
   const settled = await Promise.allSettled(
     slots.map(({ question, globalIndex, excerptIndex }) =>
       limiter(async () => {
-        const chapter = pickChapter(question, chapters, globalIndex);
-        const excerpt = pickExcerpt(chapter.sourceText, excerptIndex, 1500, slots.length);
+        let generated: object | null;
 
-        const generated = question.type === 'longAnswer'
-          ? await generateLongAnswerQuestion(question, chapter, excerpt, options, options.requestId)
-          : await generateObjectiveQuestion(question, chapter, excerpt, options, options.requestId);
+        if (question.type === 'figureBased') {
+          const figure = pickFigure(figureImages, figureSlotIdx++);
+          if (!figure) {
+            // No figures uploaded — mark slot as failed
+            return { globalIndex, generated: null };
+          }
+          generated = await generateFigureQuestion(question, figure, options, options.requestId);
+        } else {
+          const chapter = pickChapter(question, chapters, globalIndex);
+          const excerpt = pickExcerpt(chapter.sourceText, excerptIndex, 1500, slots.length);
+          generated = question.type === 'longAnswer'
+            ? await generateLongAnswerQuestion(question, chapter, excerpt, options, options.requestId)
+            : await generateObjectiveQuestion(question, chapter, excerpt, options, options.requestId);
+        }
 
         return { globalIndex, generated };
       }),

@@ -29,6 +29,8 @@ export interface PromptContext {
   baseQuestion?:       string | null;
   // Legacy retry deduplication hint from runTypeLoop
   dedupeHint?:         string;
+  // mapSkill only: teacher-specified places to mark on the map
+  mapItems?:           string[];
 }
 
 // ── Shared preamble ───────────────────────────────────────────────────────────
@@ -374,21 +376,23 @@ for that).`,
 
   longAnswer: `
 SCHEMA FOR THIS TYPE:
-{
-  "marks": number,
-  "explanation": string,
-  "preamble": string,
-  "parts": [
-    {
-      "label": string,
-      "marks": number,
-      "question": string,
-      "modelAnswer": string
-    }
-  ]
-}
+[
+  {
+    "marks": number,
+    "explanation": string,
+    "preamble": string,
+    "parts": [
+      {
+        "label": string,
+        "marks": number,
+        "question": string,
+        "modelAnswer": string
+      }
+    ]
+  }
+]
 
-NOTE: Return a SINGLE JSON object (not wrapped in an array) for this type.
+Return a JSON array containing exactly 1 long-answer question object (count is always 1 for this type).
 
 TYPE-SPECIFIC RULES
 - "preamble": Write a realistic scenario or case study paragraph based on \
@@ -404,6 +408,58 @@ recall or comprehension, end with application or analysis.
 marks: ~20-30 words per mark.
 - "explanation" is a teacher note explaining the conceptual linkage \
 between the preamble and the sub-parts — not a restatement of the answers.`,
+
+  mapSkill: `
+SCHEMA FOR THIS TYPE:
+[
+  {
+    "marks": number,
+    "explanation": string,
+    "instruction": string,
+    "items": [string, string, ...],
+    "totalToAttempt": number,
+    "modelAnswer": [string, string, ...]
+  }
+]
+
+TYPE-SPECIFIC RULES
+- "instruction": Write the formal exam instruction line, e.g. \
+"Locate and label any five of the following places on the outline map of India \
+provided to you." Adapt to the actual subject and number of items to attempt.
+- "items": {{mapItemsBlock}}
+- "totalToAttempt": The number of items the student must mark — equal to the \
+marks value (1 mark per item). Must be less than or equal to items.length.
+- "modelAnswer": One short descriptive sentence per item (in the same order as \
+"items") saying WHERE the feature is located — its state/region, coast, \
+direction, or any identifier that confirms correct placement on the map. \
+Must have exactly one entry for EVERY item listed.
+- "explanation": A teacher note on which geographic/spatial skills this question \
+tests — not a restatement of the answers.`,
+
+  figureBased: `
+SCHEMA FOR THIS TYPE:
+{
+  "marks": number,
+  "questionText": string,
+  "subType": "mcq" | "shortAnswer",
+  "options": [string],
+  "correctAnswer": string,
+  "useLatex": boolean,
+  "explanation": string
+}
+
+NOTE: figureBased questions are generated via the vision path (image + text), not \
+this text-only prompt. This entry exists only for type-system completeness. \
+If you reach this prompt for a figureBased question, treat it as a shortAnswer \
+about the most likely figure described in the source text.
+
+TYPE-SPECIFIC RULES
+- "questionText": The question about the figure. For math/science, use $LaTeX$ \
+syntax for formulas: $x^2 + y^2 = r^2$. Set "useLatex": true if any math is used.
+- "subType": "mcq" for 1-2 mark questions; "shortAnswer" for 3+ marks.
+- "options": Exactly 4 strings for mcq; omit entirely for shortAnswer.
+- "correctAnswer": Exact option text (mcq) or model answer prose (shortAnswer).
+- "explanation": Why the answer is correct, addressing the most likely mistake.`,
 };
 
 // ── Auxiliary instruction blocks ──────────────────────────────────────────────
@@ -469,6 +525,7 @@ export async function buildPrompt(
     strategy,
     baseQuestion       = null,
     dedupeHint,
+    mapItems,
   } = context;
 
   // Exemplars for style guidance (async DB call — skipped when teacherId absent)
@@ -480,6 +537,10 @@ export async function buildPrompt(
     : referenceQuestions;
 
   // ── Assemble system prompt ────────────────────────────────────────────────
+  const mapItemsBlock = mapItems && mapItems.length > 0
+    ? `Use EXACTLY these places provided by the teacher:\n${mapItems.map((item, i) => `  ${i + 1}. ${item}`).join('\n')}\nCopy each entry into "items" exactly as written. Do not add, remove, or rename any item.`
+    : 'List 6–8 distinct geographical features, places, rivers, cities, regions, or landmarks drawn from the source text. Use only entities that actually appear in or are strongly implied by the source. Each item must be identifiable on a map.';
+
   const preamble = renderTemplate(PREAMBLE + '\n\n' + TYPE_SUFFIX[type], {
     examBoard,
     institutionType,
@@ -489,6 +550,7 @@ export async function buildPrompt(
     inferenceRatio:     String(inferenceRatio),
     count:              String(count),
     marksPerQuestion:   String(marksPerQuestion),
+    mapItemsBlock,
   });
 
   const difficultyBlock = `\nDIFFICULTY GUIDANCE: ${DIFFICULTY_INSTRUCTIONS[difficulty]}`;

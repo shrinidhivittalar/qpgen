@@ -11,6 +11,8 @@ export const PAPER_QUESTION_TYPES = [
   'sorting',
   'shortAnswer',
   'longAnswer',
+  'mapSkill',
+  'figureBased',
 ] as const;
 
 export type PaperQuestionType = typeof PAPER_QUESTION_TYPES[number];

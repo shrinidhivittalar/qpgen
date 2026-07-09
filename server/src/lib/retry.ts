@@ -29,7 +29,9 @@ export async function withRetry<T>(
       lastErr = err;
       if (attempt === maxAttempts || !isRetryable(err)) throw err;
       const retryAfterMs = parseRetryAfterMs(err);
-      const backoffMs = retryAfterMs ?? 1000 * Math.pow(2, attempt - 1);
+      const base = retryAfterMs ?? 1000 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 1000); // 0–999 ms
+      const backoffMs = base + jitter;
       logger.warn('groq_retry', { attempt, backoffMs, error: String(err) });
       await new Promise(r => setTimeout(r, backoffMs));
     }

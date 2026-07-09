@@ -432,14 +432,16 @@ export default function DashboardPage() {
   const { user, logout } = useAuth();
   const {
     state, setTypeConfig, setIntent, applyScheme,
-    generate, generatePaper, editQuestion, regenerateType,
+    generate, generatePaper, addFigureImages, removeFigureImage,
+    editQuestion, regenerateType,
   } = useGeneration();
   const {
     setId, typeConfig, results, isGenerating, isRegenerating, exportError,
     difficultyDefault, tone, bankId, activeSchemeId,
     activePaperStructure, filledPaperStructure, isPaperGenerating,
-    paperGenerateError, paperStats,
+    paperGenerateError, paperStats, figureImages,
   } = state;
+
 
   const isPaperMode = Boolean(activePaperStructure);
 
@@ -1168,6 +1170,53 @@ export default function DashboardPage() {
                   </div>
                 </Card>
               </SectionStep>
+            )}
+
+            {/* Figure upload — shown whenever in paper mode so figures are ready before generation */}
+            {schemeStep === 'done' && isPaperMode && (
+              <div className="rounded-card border border-purple-200 bg-purple-50 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-purple-900">Figure Images</p>
+                    <p className="text-xs text-purple-600 mt-0.5">
+                      Upload one image per Figure Based question slot (PNG or JPG).
+                    </p>
+                  </div>
+                  <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50 transition-colors">
+                    + Add Images
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      multiple
+                      className="hidden"
+                      onChange={e => e.target.files && addFigureImages(e.target.files)}
+                    />
+                  </label>
+                </div>
+
+                {figureImages.length === 0 ? (
+                  <p className="text-xs text-purple-400 italic">No figures added yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {figureImages.map((fig, i) => (
+                      <div key={i} className="relative group">
+                        <img
+                          src={`data:${fig.mimeType};base64,${fig.base64}`}
+                          alt={fig.filename}
+                          className="h-16 w-16 object-cover rounded border border-purple-200"
+                        />
+                        <button
+                          onClick={() => removeFigureImage(i)}
+                          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-xs hidden group-hover:flex items-center justify-center leading-none"
+                        >
+                          ×
+                        </button>
+                        <p className="text-xs text-purple-500 text-center mt-0.5 truncate w-16">{fig.filename}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Generate button */}

@@ -3,6 +3,7 @@ import { validateQuestionBlock, assignGlobalIds, QuestionBlock } from '../valida
 import { QuestionType } from '../validation/schemaMap.js';
 import { buildPrompt, PromptContext } from './prompts.js';
 import { withRetry, withTimeout } from '../lib/retry.js';
+import { groqAcquire } from '../lib/groqLimiter.js';
 import { allocateSlots, ChapterInput } from './slotAllocator.js';
 import { pickStrategy, Strategy } from './strategyPicker.js';
 import { createLimiter } from '../lib/concurrency.js';
@@ -111,12 +112,15 @@ export function parseAiJsonArray(raw: string): unknown[] {
   }
 }
 
-// Shared Groq call — returns parsed questions and token count for this call.
+// Shared Groq call — reserves a token window slot before calling the API.
+// The actual HTTP call runs concurrently with others; only the reserve step
+// is serialised (inside groqAcquire) to prevent window-check races.
 async function callGroq(
   type:   QuestionType,
   system: string,
   user:   string,
 ): Promise<{ questions: unknown[]; tokens: number }> {
+  await groqAcquire();
   const response = await withRetry(
     () => withTimeout(
       () => getGroq().chat.completions.create({
@@ -159,10 +163,13 @@ export function makeTrackedGenerateFn(): { generateFn: GenerateFn; getTokensUsed
 }
 
 // ── Slot-based generation ─────────────────────────────────────────────────────
-// New layer between generateSet and runTypeLoop, wiring together slot
-// allocation, strategy picking, and the concurrency limiter.
-// Each slot is a single question with its own excerpt, difficulty, and
-// historical strategy — runTypeLoop is reused with count=1 per slot.
+// Slots are grouped into batches of up to SLOT_BATCH_SIZE per API call to
+// reduce the number of Groq requests and stay within the TPM window.
+// Each batch shares the first slot's excerpt, chapter, and difficulty — a
+// deliberate tradeoff: slightly less per-question diversity in exchange for
+// 3-4× fewer API calls and dramatically shorter generation time.
+
+const SLOT_BATCH_SIZE = 3;
 
 export async function generateTypeViaSlots(
   type:               QuestionType,
@@ -175,32 +182,45 @@ export async function generateTypeViaSlots(
   bankId:             string | undefined,
   limiter:            ReturnType<typeof createLimiter>,
   typeIndex:          number = 0,
+  mapItems?:          string[],
 ): Promise<{ questions: object[]; requested: number; received: number }> {
   const slots = await allocateSlots(type, count, marksPerQuestion, chapters, explicitDifficulty, typeIndex);
 
-  const settled = await Promise.allSettled(
-    slots.map(slot =>
-      limiter(async () => {
-        const { strategy, baseQuestion } = await pickStrategy(teacherId, slot.chapterId, type);
+  // Group slots into sequential batches to minimise API calls.
+  // Each batch generates SLOT_BATCH_SIZE questions in one Groq call using
+  // the lead slot's excerpt. Slots are pre-shuffled by allocateSlots so
+  // chapter diversity is already encoded in the slot order.
+  const batches: typeof slots[] = [];
+  for (let i = 0; i < slots.length; i += SLOT_BATCH_SIZE) {
+    batches.push(slots.slice(i, i + SLOT_BATCH_SIZE));
+  }
 
-        const slotGenerateFn: GenerateFn = async (_src, _type, _count, marks) => {
-          const { system, user } = await buildPrompt(type, slot.sourceExcerpt, 1, marks, {
+  const settled = await Promise.allSettled(
+    batches.map(batchSlots =>
+      limiter(async () => {
+        const lead = batchSlots[0];
+        const batchCount = batchSlots.length;
+        const { strategy, baseQuestion } = await pickStrategy(teacherId, lead.chapterId, type);
+
+        const slotGenerateFn: GenerateFn = async (_src, _type, n, marks) => {
+          const { system, user } = await buildPrompt(type, lead.sourceExcerpt, n, marks, {
             teacherId,
             bankId,
             tone,
-            difficulty:   slot.difficulty,
-            chapterName:  slot.chapterName,
+            difficulty:   lead.difficulty,
+            chapterName:  lead.chapterName,
             strategy,
             baseQuestion,
+            mapItems,
           });
           const { questions } = await callGroq(type, system, user);
           return questions;
         };
 
         return runTypeLoop(
-          slot.sourceExcerpt,
+          lead.sourceExcerpt,
           type,
-          1,
+          batchCount,
           marksPerQuestion,
           slotGenerateFn,
           { strategyContext: { strategy, baseQuestion } },

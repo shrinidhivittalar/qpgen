@@ -9,6 +9,8 @@ import { TrueFalseSchema }         from './schemas/trueFalse.js';
 import { AssertionReasonSchema }   from './schemas/assertionReason.js';
 import { ShortAnswerSchema }       from './schemas/shortAnswer.js';
 import { LongAnswerSchema }        from './schemas/longAnswer.js';
+import { MapSkillSchema }          from './schemas/mapSkill.js';
+import { FigureBasedSchema }       from './schemas/figureBased.js';
 
 export type QuestionType =
   | 'fillInBlanks'
@@ -20,7 +22,9 @@ export type QuestionType =
   | 'trueFalse'
   | 'assertionReason'
   | 'shortAnswer'
-  | 'longAnswer';
+  | 'longAnswer'
+  | 'mapSkill'
+  | 'figureBased';
 
 export const schemaMap: Record<QuestionType, z.ZodTypeAny> = {
   fillInBlanks:      FillInBlanksSchema,
@@ -33,4 +37,6 @@ export const schemaMap: Record<QuestionType, z.ZodTypeAny> = {
   assertionReason:   AssertionReasonSchema,
   shortAnswer:       ShortAnswerSchema,
   longAnswer:        LongAnswerSchema,
+  mapSkill:          MapSkillSchema,
+  figureBased:       FigureBasedSchema,
 };

@@ -3,6 +3,7 @@ import {
   BorderStyle,
   Document,
   Footer,
+  ImageRun,
   Packer,
   PageNumber,
   Paragraph,
@@ -33,6 +34,14 @@ const BOX_BORDERS   = { top: BORDER_SINGLE, bottom: BORDER_SINGLE, left: BORDER_
 const NO_BORDERS    = { top: BORDER_NONE, bottom: BORDER_NONE, left: BORDER_NONE, right: BORDER_NONE, insideH: BORDER_NONE, insideV: BORDER_NONE };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Strip $...$ and $$...$$ delimiters for plain-text Word output.
+// The LaTeX expression is kept; only the delimiter symbols are removed.
+function stripLatex(text: string): string {
+  return text
+    .replace(/\$\$([^$]+)\$\$/g, '$1')
+    .replace(/\$([^$]+)\$/g,     '$1');
+}
 
 function r(
   text: string,
@@ -387,6 +396,97 @@ function renderQuestion(q: PaperQuestion, num: number): DocChild[] {
       out.push(blankLine());
       break;
     }
+
+    case 'mapSkill': {
+      const instruction    = (gen.instruction    as string)   ?? 'Mark the following on the outline map provided.';
+      const items          = (gen.items          as string[]) ?? [];
+      const totalToAttempt = (gen.totalToAttempt as number)  ?? items.length;
+      out.push(new Paragraph({
+        children: [r(`Q${num}.  `, { bold: true }), r(instruction), marksRun(q.marks)],
+        spacing: sp(80),
+      }));
+      out.push(new Paragraph({
+        children: [r(`(Attempt any ${totalToAttempt} of the following ${items.length} items — 1 mark each)`, { italics: true, size: SZ_SMALL, color: '444444' })],
+        indent:  { left: INDENT_Q },
+        spacing: sp(40),
+      }));
+      items.forEach((item, i) => {
+        out.push(new Paragraph({
+          children: [r(`${i + 1}.  ${item}`)],
+          indent:  { left: INDENT_OPT },
+          spacing: sp(30),
+        }));
+      });
+      out.push(blankLine());
+      break;
+    }
+
+    case 'figureBased': {
+      const imageBase64   = (gen.imageBase64   as string | undefined) ?? '';
+      const imageMimeType = (gen.imageMimeType as string | undefined) ?? 'image/jpeg';
+      const questionText  = stripLatex((gen.questionText as string | undefined) ?? '');
+      const subType       = (gen.subType as string | undefined) ?? 'mcq';
+      const useLatex      = !!(gen.useLatex as boolean | undefined);
+
+      out.push(new Paragraph({
+        children: [r(`Q${num}.  `, { bold: true }), marksRun(q.marks)],
+        spacing: sp(60),
+      }));
+
+      // Embed the figure image
+      if (imageBase64) {
+        const imgType = imageMimeType === 'image/png' ? 'png' : 'jpg';
+        out.push(new Paragraph({
+          children: [
+            new ImageRun({
+              type: imgType,
+              data: Buffer.from(imageBase64, 'base64'),
+              transformation: { width: 380, height: 260 },
+            } as any),
+          ],
+          indent:  { left: INDENT_Q },
+          spacing: sp(60, 20),
+        }));
+      }
+
+      out.push(new Paragraph({
+        children: [
+          r(questionText),
+          ...(useLatex ? [r('  *', { italics: true, size: SZ_SMALL, color: '888888' })] : []),
+        ],
+        indent:  { left: INDENT_Q },
+        spacing: sp(60),
+      }));
+
+      if (subType === 'mcq') {
+        const opts = (gen.options as string[] | undefined) ?? [];
+        opts.forEach((opt, i) => {
+          out.push(new Paragraph({
+            children: [r(`(${String.fromCharCode(65 + i)})  ${stripLatex(opt)}`)],
+            indent:  { left: INDENT_OPT },
+            spacing: sp(40),
+          }));
+        });
+      } else {
+        // shortAnswer — leave answer lines
+        out.push(new Paragraph({
+          children: [r('Answer:  ___________________________________________', { italics: true, color: '999999' })],
+          indent:  { left: INDENT_Q },
+          spacing: sp(40),
+        }));
+      }
+
+      if (useLatex) {
+        out.push(new Paragraph({
+          children: [r('* Expressions rendered as LaTeX in the digital version.', { italics: true, size: SZ_SMALL, color: '888888' })],
+          indent:  { left: INDENT_Q },
+          spacing: sp(60),
+        }));
+      }
+
+      out.push(blankLine());
+      break;
+    }
   }
 
   return out;
@@ -505,6 +605,58 @@ function renderAnswer(q: PaperQuestion, num: number): DocChild[] {
       if (gen.explanation) {
         out.push(new Paragraph({
           children: [r((gen.explanation as string) ?? '', { italics: true, color: '555555', size: SZ_SMALL })],
+          indent:  { left: INDENT_Q },
+          spacing: sp(120),
+        }));
+      } else {
+        out.push(blankLine());
+      }
+      break;
+    }
+
+    case 'mapSkill': {
+      out.push(new Paragraph({ children: [prefix], spacing: sp(40) }));
+      const items       = (gen.items       as string[]) ?? [];
+      const modelAnswer = (gen.modelAnswer as string[]) ?? [];
+      items.forEach((item, i) => {
+        out.push(new Paragraph({
+          children: [r(`${i + 1}.  ${item}:  `, { bold: true }), r(modelAnswer[i] ?? '')],
+          indent:  { left: INDENT_Q },
+          spacing: sp(30),
+        }));
+      });
+      if (gen.explanation) {
+        out.push(new Paragraph({
+          children: [r((gen.explanation as string) ?? '', { italics: true, color: '555555', size: SZ_SMALL })],
+          indent:  { left: INDENT_Q },
+          spacing: sp(120),
+        }));
+      } else {
+        out.push(blankLine());
+      }
+      break;
+    }
+
+    case 'figureBased': {
+      const correctAnswer = stripLatex((gen.correctAnswer as string | undefined) ?? '');
+      const subType       = (gen.subType as string | undefined) ?? 'mcq';
+      out.push(new Paragraph({ children: [prefix], spacing: sp(40) }));
+      if (subType === 'mcq') {
+        out.push(new Paragraph({
+          children: [r('Correct option:  ', { bold: true }), r(correctAnswer)],
+          indent:  { left: INDENT_Q },
+          spacing: sp(40),
+        }));
+      } else {
+        out.push(new Paragraph({
+          children: [r('Model Answer:  ', { bold: true }), r(correctAnswer)],
+          indent:  { left: INDENT_Q },
+          spacing: sp(40),
+        }));
+      }
+      if (gen.explanation) {
+        out.push(new Paragraph({
+          children: [r(stripLatex((gen.explanation as string) ?? ''), { italics: true, color: '555555', size: SZ_SMALL })],
           indent:  { left: INDENT_Q },
           spacing: sp(120),
         }));

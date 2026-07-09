@@ -1,4 +1,5 @@
 import type { PaperStructure, PaperSection, PaperQuestion } from '../types';
+import { LatexText } from './LatexText';
 
 const LABEL_MAP: Record<string, string> = {
   multipleChoice:    'MCQ',
@@ -11,6 +12,8 @@ const LABEL_MAP: Record<string, string> = {
   sorting:           'Sorting',
   shortAnswer:       'Short Answer',
   longAnswer:        'Long Answer',
+  mapSkill:          'Map Skill',
+  figureBased:       'Figure Based',
 };
 
 function StatusBadge({ q }: { q: PaperQuestion }) {
@@ -36,6 +39,73 @@ function LongAnswerResult({ q }: { q: PaperQuestion }) {
           <p className="text-gray-600 text-xs"><span className="font-medium text-gray-500">Model answer:</span> {pt.modelAnswer}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function FigureBasedResult({ q }: { q: PaperQuestion }) {
+  const gen          = q.generated as Record<string, unknown> | null;
+  if (!gen) return null;
+
+  const imageBase64   = gen.imageBase64   as string | undefined;
+  const imageMimeType = gen.imageMimeType as string | undefined;
+  const questionText  = gen.questionText  as string | undefined;
+  const subType       = gen.subType       as string | undefined;
+  const options       = gen.options       as string[] | undefined;
+  const correctAnswer = gen.correctAnswer as string | undefined;
+  const explanation   = gen.explanation   as string | undefined;
+  const useLatex      = !!(gen.useLatex   as boolean | undefined);
+
+  return (
+    <div className="mt-3 pl-4 border-l-2 border-purple-200 text-sm space-y-2">
+
+      {/* Figure image */}
+      {imageBase64 && (
+        <img
+          src={`data:${imageMimeType ?? 'image/jpeg'};base64,${imageBase64}`}
+          alt="Figure"
+          className="max-h-60 rounded border border-gray-200 object-contain"
+        />
+      )}
+
+      {/* Question text — with LaTeX if needed */}
+      {questionText && (
+        useLatex
+          ? <LatexText text={questionText} className="text-gray-800 block" />
+          : <p className="text-gray-800">{questionText}</p>
+      )}
+
+      {/* MCQ options */}
+      {subType === 'mcq' && options && (
+        <ol className="list-none space-y-0.5">
+          {options.map((opt, i) => {
+            const letter    = String.fromCharCode(65 + i);
+            const isCorrect = opt.trim().toLowerCase() === (correctAnswer ?? '').trim().toLowerCase();
+            return (
+              <li key={i} className={`flex gap-2 ${isCorrect ? 'text-green-700 font-medium' : 'text-gray-600'}`}>
+                <span className="shrink-0">({letter})</span>
+                {useLatex ? <LatexText text={opt} /> : <span>{opt}</span>}
+                {isCorrect && <span className="text-green-600 text-xs">✓</span>}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      {/* Short answer model answer */}
+      {subType === 'shortAnswer' && correctAnswer && (
+        <div className="bg-blue-50 rounded p-2 text-xs text-gray-700">
+          <span className="font-medium text-gray-500">Model answer: </span>
+          {useLatex ? <LatexText text={correctAnswer} /> : correctAnswer}
+        </div>
+      )}
+
+      {/* Explanation */}
+      {explanation && (
+        <p className="text-xs text-gray-400 italic border-t border-gray-100 pt-1">
+          {useLatex ? <LatexText text={explanation} /> : explanation}
+        </p>
+      )}
     </div>
   );
 }
@@ -174,7 +244,11 @@ function QuestionRow({ q, sectionIdx, qIdx }: { q: PaperQuestion; sectionIdx: nu
           </span>
           <span className="text-xs text-gray-500 shrink-0">{q.marks} mark{q.marks !== 1 ? 's' : ''}</span>
           {q.wordLimit && (
-            <span className="text-xs text-gray-400 shrink-0">≤{q.wordLimit} words</span>
+            <span className="text-xs text-gray-400 shrink-0">
+              {q.wordLimit.min === q.wordLimit.max
+                ? `≤${q.wordLimit.max} words`
+                : `${q.wordLimit.min}–${q.wordLimit.max} words`}
+            </span>
           )}
           {q.unitRef && (
             <span className="text-xs text-gray-400 truncate">Unit: {q.unitRef}</span>
@@ -187,8 +261,9 @@ function QuestionRow({ q, sectionIdx, qIdx }: { q: PaperQuestion; sectionIdx: nu
         <p className="mt-2 text-xs text-red-600 pl-4">{q.error}</p>
       )}
 
-      {q.generated && q.type === 'longAnswer' && <LongAnswerResult q={q} />}
-      {q.generated && q.type !== 'longAnswer' && <ObjectiveResult q={q} />}
+      {q.generated && q.type === 'longAnswer'   && <LongAnswerResult q={q} />}
+      {q.generated && q.type === 'figureBased' && <FigureBasedResult q={q} />}
+      {q.generated && q.type !== 'longAnswer' && q.type !== 'figureBased' && <ObjectiveResult q={q} />}
     </div>
   );
 }

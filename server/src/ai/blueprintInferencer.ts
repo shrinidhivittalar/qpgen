@@ -27,6 +27,9 @@ const SUPPORTED_TYPES = [
   'trueFalse',
   'assertionReason',
   'shortAnswer',
+  'longAnswer',
+  'mapSkill',
+  'figureBased',
 ] as const;
 
 const BLUEPRINT_PROMPT = `You are an experienced academic paper-setter and assessment blueprint analyst.
@@ -84,7 +87,10 @@ Question type mapping:
 - reordering: arrange, sequence, reorder steps
 - sorting: classify, categorize, group into categories
 - assertionReason: assertion-reason, statement/reason objective item
-- shortAnswer: short answer, very short answer, 2-5 mark explanatory written answer
+- shortAnswer: short answer, very short answer, 2-5 mark explanatory written answer (up to ~4 sentences)
+- longAnswer: long answer, essay, detailed answer, 4–10 mark extended written response (paragraph or more)
+- mapSkill: locate on map, mark on map, outline map, geographical identification, map-based questions
+- figureBased: diagram-based, figure-based, image-based, picture-based questions; questions that refer to a labelled diagram, chart, or image provided alongside the question
 
 Rules:
 - Use only supported questionType values from the mapping above.
@@ -102,15 +108,22 @@ function getGroq(): Groq {
 }
 
 function parseJsonObject(raw: string): unknown {
+  // Try direct / code-fenced JSON first
   const cleaned = raw
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+
+  // AI sometimes wraps JSON in prose ("Here is the blueprint: {...} Note: …").
+  // Extract the outermost { … } block.
+  const firstBrace = raw.indexOf('{');
+  const lastBrace  = raw.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try { return JSON.parse(raw.slice(firstBrace, lastBrace + 1)); } catch { /* fall through */ }
   }
+
+  return null;
 }
 
 function normalizeBlueprint(raw: unknown, metadata: BlueprintMetadata, rawText: string): ExamBlueprint {

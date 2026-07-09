@@ -20,6 +20,9 @@ export class ValidationError extends Error {
 
 function extractPrimaryText(type: QuestionType, data: any): string {
   if (type === 'assertionReason') return (data.assertion ?? '') as string;
+  if (type === 'longAnswer')      return (data.preamble ?? '') as string;
+  if (type === 'mapSkill')        return (data.instruction ?? '') as string;
+  if (type === 'figureBased')     return (data.questionText ?? '') as string;
   return (data.question?.text ?? '') as string;
 }
 

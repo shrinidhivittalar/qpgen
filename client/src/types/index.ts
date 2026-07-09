@@ -31,7 +31,9 @@ export type QuestionType =
   | 'trueFalse'
   | 'assertionReason'
   | 'shortAnswer'
-  | 'longAnswer';
+  | 'longAnswer'
+  | 'mapSkill'
+  | 'figureBased';
 
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   fillInBlanks:      'Fill in the Blanks',
@@ -44,12 +46,15 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   assertionReason:   'Assertion / Reason',
   shortAnswer:       'Short Answer',
   longAnswer:        'Long Answer',
+  mapSkill:          'Map Skill',
+  figureBased:       'Figure Based',
 };
 
 export const ALL_QUESTION_TYPES: QuestionType[] = [
   'fillInBlanks', 'multipleChoice', 'multiSelect',
   'matchTheFollowing', 'reordering', 'sorting', 'trueFalse',
-  'assertionReason', 'shortAnswer', 'longAnswer',
+  'assertionReason', 'shortAnswer', 'longAnswer', 'mapSkill',
+  'figureBased',
 ];
 
 // ── Paper Structure types (hierarchical paper format) ─────────────────────────
@@ -96,6 +101,7 @@ export interface TypeConfig {
   count:            number;
   marksPerQuestion: number;
   difficulty?:      DifficultyLevel;
+  mapItems?:        string[];
 }
 
 export interface ReferenceBank {

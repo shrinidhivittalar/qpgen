@@ -121,6 +121,11 @@ export default function TypeConfigurator({
     onChange(config.map(c => c.type === type ? { ...c, difficulty } : c));
   }
 
+  function updateMapItems(type: QuestionType, raw: string) {
+    const items = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    onChange(config.map(c => c.type === type ? { ...c, mapItems: items } : c));
+  }
+
   const totalQuestions = config.reduce((s, c) => s + c.count, 0);
   const totalMarks     = config.reduce((s, c) => s + c.count * c.marksPerQuestion, 0);
   const canGenerate    = config.some(c => c.count > 0);
@@ -241,6 +246,26 @@ export default function TypeConfigurator({
                       />
                     </label>
                   </div>
+
+                  {type === 'mapSkill' && (
+                    <div className="mt-3 space-y-1">
+                      <label className="text-xs text-gray-500">
+                        Map items — one place per line
+                        <span className="text-gray-400 ml-1">(required)</span>
+                      </label>
+                      <textarea
+                        rows={5}
+                        placeholder={"e.g.\nGanga River\nWestern Ghats\nDeccan Plateau\nBay of Bengal\nHimalayas"}
+                        value={entry.mapItems?.join('\n') ?? ''}
+                        onChange={e => updateMapItems(type, e.target.value)}
+                        disabled={disabled}
+                        className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y disabled:opacity-60"
+                      />
+                      <p className="text-xs text-gray-400">
+                        Provide 6–8 places the student will mark on the map.
+                      </p>
+                    </div>
+                  )}
 
                   {expanded && (
                     <div className="mt-3 space-y-1">
