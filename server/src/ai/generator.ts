@@ -2,6 +2,7 @@ import Groq from 'groq-sdk';
 import { validateQuestionBlock, assignGlobalIds, QuestionBlock } from '../validation/index.js';
 import { QuestionType } from '../validation/schemaMap.js';
 import { buildPrompt, PromptContext } from './prompts.js';
+import { buildMapSkillPrompt } from './paperGenerator.js';
 import { withRetry, withTimeout } from '../lib/retry.js';
 import { groqAcquire } from '../lib/groqLimiter.js';
 import { allocateSlots, ChapterInput } from './slotAllocator.js';
@@ -97,15 +98,33 @@ function recalculateMarks(questions: object[], marksPerQuestion: number): object
 }
 
 // EC-GEN-08: strip markdown fences the model may add despite instructions,
-// then parse. Returns [] on any parse failure — runTypeLoop treats that as
-// 0 received and retries.
+// then parse. If the model prepends prose before the JSON array, find the
+// first [...] bracket pair and extract it. Returns [] on any parse failure.
 export function parseAiJsonArray(raw: string): unknown[] {
   const cleaned = raw
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim();
+
+  // Fast path: the whole cleaned string is valid JSON
   try {
     const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+
+  // Slow path: extract the first [...] block from the string.
+  // Walk character-by-character tracking bracket depth to find the matching ].
+  const start = cleaned.indexOf('[');
+  if (start === -1) return [];
+  let depth = 0;
+  let end   = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    if      (cleaned[i] === '[') depth++;
+    else if (cleaned[i] === ']') { if (--depth === 0) { end = i; break; } }
+  }
+  if (end === -1) return [];
+  try {
+    const parsed = JSON.parse(cleaned.slice(start, end + 1));
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -203,16 +222,20 @@ export async function generateTypeViaSlots(
         const { strategy, baseQuestion } = await pickStrategy(teacherId, lead.chapterId, type);
 
         const slotGenerateFn: GenerateFn = async (_src, _type, n, marks) => {
-          const { system, user } = await buildPrompt(type, lead.sourceExcerpt, n, marks, {
-            teacherId,
-            bankId,
-            tone,
-            difficulty:   lead.difficulty,
-            chapterName:  lead.chapterName,
-            strategy,
-            baseQuestion,
-            mapItems,
-          });
+          // mapSkill items are teacher-specified — source text is irrelevant and
+          // confuses the model into refusing. Use the dedicated prompt instead.
+          const { system, user } = type === 'mapSkill'
+            ? buildMapSkillPrompt(marks, mapItems, n)
+            : await buildPrompt(type, lead.sourceExcerpt, n, marks, {
+                teacherId,
+                bankId,
+                tone,
+                difficulty:   lead.difficulty,
+                chapterName:  lead.chapterName,
+                strategy,
+                baseQuestion,
+                mapItems,
+              });
           const { questions } = await callGroq(type, system, user);
           return questions;
         };

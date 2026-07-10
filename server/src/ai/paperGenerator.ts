@@ -28,6 +28,45 @@ function getGroq(): Groq {
 
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-4-maverick-17b-128e-instruct';
 
+// Returns { system, user } for mapSkill — items are teacher-specified so the
+// model must NOT look to the source text for place names; it only writes
+// geography-accurate modelAnswer descriptions for each provided item.
+export function buildMapSkillPrompt(marks: number, mapItems?: string[], count = 1): { system: string; user: string } {
+  const places = (mapItems && mapItems.length >= 2)
+    ? mapItems
+    : ['Place 1', 'Place 2', 'Place 3', 'Place 4', 'Place 5', 'Place 6', 'Place 7'];
+  const itemsJson = JSON.stringify(places);
+  const attempt   = Math.min(marks, places.length);
+
+  const system = `[QUESTION_TYPE:mapSkill]
+You are a geography question paper setter. The teacher has pre-specified the following map items — you MUST use them exactly as given.
+
+ITEMS (copy into "items" array verbatim, in the same order):
+${places.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}
+
+Return ONLY a raw JSON array containing exactly ${count} object${count > 1 ? 's' : ''}. No markdown, no prose, no commentary before or after the JSON.
+
+Schema (repeat ${count} time${count > 1 ? 's' : ''} in the array):
+[{
+  "marks": ${marks},
+  "instruction": "Locate and label any ${attempt} of the following on the outline map provided.",
+  "items": ${itemsJson},
+  "totalToAttempt": ${attempt},
+  "modelAnswer": [one concise sentence per item describing WHERE it is located — its region, state, coast, direction, or any identifier that confirms correct placement. Same order as items.],
+  "explanation": "one sentence summarising what geographical knowledge this question tests"
+}]
+
+RULES:
+- "items" MUST be copied from the list above, character-for-character.
+- "totalToAttempt" MUST equal ${attempt}.
+- "modelAnswer" MUST have exactly ${places.length} entries, one per item.
+- Each modelAnswer entry: "${places[0]} — <where it is located on a map>".
+- Do NOT return an empty array. Do NOT add extra fields.`;
+
+  const user = `Generate ${count} mapSkill question${count > 1 ? 's' : ''} using the items listed in the system prompt.`;
+  return { system, user };
+}
+
 function buildSlotSystemPrompt(type: QuestionType, marks: number, tone: string): string {
   const toneNote = tone === 'formal-board-exam' ? 'Formal board-exam register.' : 'Clear, plain language.';
   const m = marks;
@@ -44,7 +83,6 @@ function buildSlotSystemPrompt(type: QuestionType, marks: number, tone: string):
     matchTheFollowing:`[{"marks":${m},"question":${q},"leftItems":["Term 1","Term 2","Term 3"],"rightItems":["Def 1","Def 2","Def 3","Distractor"],"correctAnswer":[{"left":"Term 1","right":"Def 1"},{"left":"Term 2","right":"Def 2"},{"left":"Term 3","right":"Def 3"}],"explanation":"why these pairs"}]`,
     reordering:       `[{"marks":${m},"question":${q},"items":["Step C","Step A","Step B"],"correctAnswer":["Step A","Step B","Step C"],"explanation":"why this order"}]`,
     sorting:          `[{"marks":${m},"question":${q},"categories":["Cat A","Cat B"],"items":["item1","item2","item3","item4"],"correctAnswer":{"Cat A":["item1","item3"],"Cat B":["item2","item4"]},"explanation":"why"}]`,
-    mapSkill:         `[{"marks":${m},"instruction":"Mark any ${m} of the following on the outline map provided.","items":["Place 1","Place 2","Place 3","Place 4","Place 5","Place 6","Place 7"],"totalToAttempt":${m},"modelAnswer":["Place 1 — description of its location","Place 2 — description of its location","Place 3 — description of its location","Place 4 — description of its location","Place 5 — description of its location","Place 6 — description of its location","Place 7 — description of its location"],"explanation":"Tests geographical knowledge and spatial awareness"}]`,
     // figureBased is generated via the vision path — this schema is shown only as a
     // fallback reference if the text path is ever called for this type.
     figureBased:      `{"marks":${m},"questionText":"question about the figure","subType":"mcq","options":["option A","option B","option C","option D"],"correctAnswer":"option A","useLatex":false,"explanation":"why A is correct"}`,
@@ -265,8 +303,9 @@ async function generateObjectiveQuestion(
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const system = buildSlotSystemPrompt(type, question.marks, options.tone ?? 'formal-board-exam');
-      const user   = `SOURCE TEXT:\n${excerpt}`;
+      const { system, user } = type === 'mapSkill'
+        ? buildMapSkillPrompt(question.marks, question.mapItems)
+        : { system: buildSlotSystemPrompt(type, question.marks, options.tone ?? 'formal-board-exam'), user: `SOURCE TEXT:\n${excerpt}` };
 
       await groqAcquire();
       const response = await withRetry(

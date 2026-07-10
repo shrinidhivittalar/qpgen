@@ -30,6 +30,7 @@ export const PaperQuestionSchema = z.object({
   unitRef:      z.string().optional(),
   chapterId:    z.string().optional(),
   subPartCount: z.number().int().positive().optional(),
+  mapItems:     z.array(z.string().min(1)).optional(),
   generated:    z.unknown().nullable().default(null),
   error:        z.string().optional(),
 });

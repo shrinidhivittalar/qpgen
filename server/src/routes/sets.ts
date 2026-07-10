@@ -12,7 +12,7 @@ import {
   generateSet, generateTypeViaSlots, runTypeLoop, makeTrackedGenerateFn, TypeConfig,
 } from '../ai/generator.js';
 import { generatePaper } from '../ai/paperGenerator.js';
-import { buildQuestionPaperDoc } from '../ai/wordExporter.js';
+import { buildQuestionPaperDoc, buildQuestionBlocksDoc } from '../ai/wordExporter.js';
 import { createLimiter } from '../lib/concurrency.js';
 import { assignGlobalIds, QuestionBlock, QuestionType } from '../validation/index.js';
 import { schemaMap } from '../validation/schemaMap.js';
@@ -558,6 +558,41 @@ router.post('/:id/generate-paper', requireRole('teacher'), async (req: Request, 
     filledSlots:    result.filledSlots,
     failedSlots:    result.failedSlots,
   });
+});
+
+// ── GET /api/sets/:id/export ──────────────────────────────────────────────────
+// Exports type-config generated questionBlocks to a .docx file.
+
+router.get('/:id/export', requireRole('teacher'), async (req: Request, res: Response) => {
+  const userId = (req as any).userId as string;
+
+  const set = await QuestionSet.findById(req.params.id);
+  if (!set) { res.status(404).json({ error: 'Question set not found.' }); return; }
+  if (set.teacherId.toString() !== userId) {
+    res.status(403).json({ error: 'Access denied.' }); return;
+  }
+
+  const blocks = (set as any).questionBlocks as Array<{ questionType: string; totalMarks: number; questions: unknown[] }>;
+  if (!blocks || blocks.length === 0) {
+    res.status(404).json({ error: 'No generated questions found. Generate questions first.' }); return;
+  }
+
+  try {
+    const buffer = await buildQuestionBlocksDoc(set.fileName, blocks);
+    const safeName = set.fileName
+      .replace(/[^\w\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .slice(0, 60) || 'question-set';
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('blocks_export_failed', { userId, setId: req.params.id, error: msg });
+    res.status(500).json({ error: 'Failed to generate Word document.' });
+  }
 });
 
 // ── GET /api/sets/:id/export/paper ────────────────────────────────────────────

@@ -19,6 +19,53 @@ import type { PaperStructure, PaperQuestion } from '../types/paperStructure.js';
 
 type DocChild = Paragraph | Table;
 
+// Read pixel dimensions from a base64-encoded image buffer.
+// PNG: width = bytes 16-19, height = bytes 20-23 (big-endian uint32 in IHDR chunk).
+// JPEG: scan for SOF markers (0xFFC0–0xFFC3, 0xFFC5–0xFFC7, 0xFFC9–0xFFCB).
+// Falls back to 380×260 if the format is unrecognised or the buffer is too short.
+const MAX_IMG_WIDTH = 480;  // points; fits inside standard A4 margins
+
+function readImageDimensions(buf: Buffer): { width: number; height: number } {
+  const fallback = { width: 380, height: 260 };
+  if (buf.length < 24) return fallback;
+
+  // PNG signature: 137 80 78 71 13 10 26 10
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    const w = buf.readUInt32BE(16);
+    const h = buf.readUInt32BE(20);
+    if (w > 0 && h > 0) {
+      const scale = Math.min(1, MAX_IMG_WIDTH / w);
+      return { width: Math.round(w * scale), height: Math.round(h * scale) };
+    }
+    return fallback;
+  }
+
+  // JPEG signature: FF D8
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 8 < buf.length) {
+      if (buf[offset] !== 0xff) break;
+      const marker = buf[offset + 1];
+      const segLen = buf.readUInt16BE(offset + 2);
+      // SOF markers that carry dimensions: C0–C3, C5–C7, C9–CB
+      const isSOF = (marker >= 0xc0 && marker <= 0xc3) ||
+                    (marker >= 0xc5 && marker <= 0xc7) ||
+                    (marker >= 0xc9 && marker <= 0xcb);
+      if (isSOF && offset + 7 < buf.length) {
+        const h = buf.readUInt16BE(offset + 5);
+        const w = buf.readUInt16BE(offset + 7);
+        if (w > 0 && h > 0) {
+          const scale = Math.min(1, MAX_IMG_WIDTH / w);
+          return { width: Math.round(w * scale), height: Math.round(h * scale) };
+        }
+      }
+      offset += 2 + segLen;
+    }
+  }
+
+  return fallback;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const FONT       = 'Times New Roman';
@@ -435,13 +482,15 @@ function renderQuestion(q: PaperQuestion, num: number): DocChild[] {
 
       // Embed the figure image
       if (imageBase64) {
-        const imgType = imageMimeType === 'image/png' ? 'png' : 'jpg';
+        const imgType  = imageMimeType === 'image/png' ? 'png' : 'jpg';
+        const imgBuf   = Buffer.from(imageBase64, 'base64');
+        const imgDims  = readImageDimensions(imgBuf);
         out.push(new Paragraph({
           children: [
             new ImageRun({
               type: imgType,
-              data: Buffer.from(imageBase64, 'base64'),
-              transformation: { width: 380, height: 260 },
+              data: imgBuf,
+              transformation: imgDims,
             } as any),
           ],
           indent:  { left: INDENT_Q },
@@ -746,6 +795,127 @@ export async function buildQuestionPaperDoc(structure: PaperStructure): Promise<
       },
       children,
     }],
+  });
+
+  return Packer.toBuffer(doc);
+}
+
+// ─── Export for type-config generated question blocks ─────────────────────────
+// questionBlocks: [{ questionType, totalMarks, questions: unknown[] }]
+// Each question object IS the generated data (no .generated wrapper).
+
+export interface QuestionBlockExport {
+  questionType: string;
+  totalMarks:   number;
+  questions:    unknown[];
+}
+
+export async function buildQuestionBlocksDoc(
+  fileName:      string,
+  questionBlocks: QuestionBlockExport[],
+): Promise<Buffer> {
+  const children: DocChild[] = [];
+
+  // Minimal header
+  children.push(new Paragraph({
+    children:  [r(fileName, { bold: true, size: SZ_TITLE })],
+    alignment: AlignmentType.CENTER,
+    spacing:   sp(200, 160),
+  }));
+  children.push(blankLine());
+
+  let qNum = 1;
+
+  // Questions (student-facing, no answers)
+  for (const block of questionBlocks) {
+    if (!block.questions.length) continue;
+
+    children.push(new Paragraph({
+      children: [r(block.questionType.replace(/([A-Z])/g, ' $1').trim(), { bold: true, size: 24 })],
+      spacing:  sp(120, 60),
+    }));
+
+    for (const rawQ of block.questions) {
+      const pseudoQ = {
+        number:    qNum,
+        type:      block.questionType as import('../types/paperStructure.js').PaperQuestionType,
+        marks:     (rawQ as any).marks ?? Math.round(block.totalMarks / block.questions.length),
+        generated: rawQ,
+        mapItems:  undefined,
+      };
+      children.push(...renderQuestion(pseudoQ as any, qNum));
+      qNum++;
+    }
+
+    children.push(blankLine());
+  }
+
+  // Answer key — new page
+  children.push(new Paragraph({
+    children:        [r('ANSWER KEY / MARKING SCHEME', { bold: true, size: SZ_TITLE })],
+    alignment:       AlignmentType.CENTER,
+    spacing:         sp(200, 160),
+    pageBreakBefore: true,
+  }));
+
+  qNum = 1;
+  for (const block of questionBlocks) {
+    if (!block.questions.length) continue;
+
+    children.push(new Paragraph({
+      children: [r(block.questionType.replace(/([A-Z])/g, ' $1').trim(), { bold: true })],
+      spacing:  sp(80, 100),
+    }));
+
+    for (const rawQ of block.questions) {
+      const pseudoQ = {
+        number:    qNum,
+        type:      block.questionType as import('../types/paperStructure.js').PaperQuestionType,
+        marks:     (rawQ as any).marks ?? Math.round(block.totalMarks / block.questions.length),
+        generated: rawQ,
+        mapItems:  undefined,
+      };
+      children.push(...renderAnswer(pseudoQ as any, qNum));
+      qNum++;
+    }
+
+    children.push(blankLine());
+  }
+
+  const doc = new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: {
+            top:    convertInchesToTwip(1),
+            bottom: convertInchesToTwip(1),
+            left:   convertInchesToTwip(1.25),
+            right:  convertInchesToTwip(1),
+          },
+        },
+      },
+      footers: {
+        default: new Footer({
+          children: [
+            new Paragraph({
+              children: [
+                new TextRun({ text: 'Page ', font: FONT, size: SZ_SMALL }),
+                new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SZ_SMALL }),
+                new TextRun({ text: ' of ', font: FONT, size: SZ_SMALL }),
+                new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: SZ_SMALL }),
+              ],
+              alignment: AlignmentType.CENTER,
+            }),
+          ],
+        }),
+      },
+      children,
+    }],
+    styles: {
+      default: {
+        document: { run: { font: FONT, size: SZ_BODY } },
+      },
+    },
   });
 
   return Packer.toBuffer(doc);

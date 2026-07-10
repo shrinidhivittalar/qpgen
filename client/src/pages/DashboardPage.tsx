@@ -445,8 +445,9 @@ export default function DashboardPage() {
 
   const isPaperMode = Boolean(activePaperStructure);
 
-  const [regenToast,       setRegenToast]       = useState<{ type: string; ok: boolean; msg: string } | null>(null);
-  const [downloadingPaper, setDownloadingPaper] = useState(false);
+  const [regenToast,        setRegenToast]        = useState<{ type: string; ok: boolean; msg: string } | null>(null);
+  const [downloadingPaper,  setDownloadingPaper]  = useState(false);
+  const [downloadingBlocks, setDownloadingBlocks] = useState(false);
 
   async function handleDownloadPaper() {
     if (!setId) return;
@@ -473,6 +474,34 @@ export default function DashboardPage() {
       showToast('export', false, 'Download failed.');
     } finally {
       setDownloadingPaper(false);
+    }
+  }
+
+  async function handleDownloadBlocks() {
+    if (!setId) return;
+    setDownloadingBlocks(true);
+    try {
+      const res = await apiFetch(`/api/sets/${setId}/export`);
+      if (!res.ok) {
+        const body = await res.json() as { error?: string };
+        showToast('export', false, body.error ?? 'Download failed.');
+        return;
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const match = disposition.match(/filename="([^"]+)"/);
+      a.download = match?.[1] ?? 'question-set.docx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      showToast('export', false, 'Download failed.');
+    } finally {
+      setDownloadingBlocks(false);
     }
   }
 
@@ -1328,6 +1357,21 @@ export default function DashboardPage() {
             {/* Step 5 — Question blocks */}
             {!isPaperMode && successBlocks.length > 0 && (
               <SectionStep step={5} title="Generated questions">
+                <div className="flex justify-end mb-3">
+                  <button
+                    onClick={handleDownloadBlocks}
+                    disabled={downloadingBlocks}
+                    className={`flex items-center gap-1.5 rounded-card-inner px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      downloadingBlocks
+                        ? 'bg-surface-100 text-slate-400 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                  >
+                    {downloadingBlocks
+                      ? <><Spinner className="w-3.5 h-3.5" /> Preparing…</>
+                      : <><Icons.Download /> Download .docx</>}
+                  </button>
+                </div>
                 <div className="space-y-4">
                   {successBlocks.map(b => (
                     <QuestionBlock
