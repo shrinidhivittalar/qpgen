@@ -56,9 +56,13 @@ export const ALL_QUESTION_TYPES: QuestionType[] = [
 
 export interface BankQuestion {
   _id:          string;
+  uploadId:     string;
   questionType: QuestionType;
   rawText:      string;
   subject:      string | null;
+  class:        string | null;
+  chapter:      string | null;
+  marks:        number | null;
   sourceYear:   number | null;
   confidence:   number;
   status:       'accepted' | 'needs_review' | 'rejected';

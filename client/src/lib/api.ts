@@ -53,6 +53,30 @@ export async function apiFetch(
   return res;
 }
 
+export const bankApi = {
+  stats: async (): Promise<{ totalAccepted: number }> =>
+    api.get('/api/reference-bank/stats').then(r => r.json()),
+
+  upload: (formData: FormData): Promise<Response> =>
+    apiFetch('/api/reference-bank/upload', { method: 'POST', body: formData }),
+
+  reviewQueue: async (uploadId: string) =>
+    api.get(`/api/reference-bank/uploads/${uploadId}/review`).then(r => r.json()),
+
+  patchQuestion: async (id: string, body: object) =>
+    api.patch(`/api/reference-bank/questions/${id}`, body).then(r => r.json()),
+
+  bulkAccept: async (uploadId: string): Promise<{ accepted: number }> =>
+    api.post('/api/reference-bank/questions/bulk-accept', { uploadId }).then(r => r.json()),
+
+  questions: async (params: Record<string, string | number>) => {
+    const q = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v != null).map(([k, v]) => [k, String(v)])),
+    ).toString();
+    return api.get(`/api/reference-bank/questions?${q}`).then(r => r.json());
+  },
+};
+
 export const api = {
   get:    (path: string) =>
     apiFetch(path),

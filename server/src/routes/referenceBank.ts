@@ -136,7 +136,7 @@ router.get('/stats', async (req: Request, res: Response) => {
 // ── GET /api/reference-bank/questions ────────────────────────────────────────
 
 router.get('/questions', async (req: Request, res: Response) => {
-  const { subject, chapter, questionType, marksMin, marksMax, page = '1', limit = '20' } = req.query as Record<string, string>;
+  const { subject, chapter, questionType, marksMin, marksMax, search, page = '1', limit = '20' } = req.query as Record<string, string>;
   const cls = req.query.class as string | undefined;
 
   const filter: Record<string, unknown> = { teacherId: req.userId, status: 'accepted' };
@@ -144,6 +144,7 @@ router.get('/questions', async (req: Request, res: Response) => {
   if (cls)          filter.class        = cls;
   if (chapter)      filter.chapter      = chapter;
   if (questionType) filter.questionType = questionType;
+  if (search)       filter.rawText      = { $regex: search, $options: 'i' };
   if (marksMin || marksMax) {
     const marksFilter: Record<string, number> = {};
     if (marksMin) marksFilter.$gte = Number(marksMin);
