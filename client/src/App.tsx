@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthContext, createAuthState, useAuth } from './hooks/useAuth';
+import { ToastProvider } from './components/ui';
 import type { Role } from './types';
 
 import LoginPage         from './pages/LoginPage';
@@ -53,6 +54,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <ToastProvider>
         <Routes>
           {/* Public */}
           <Route path="/login"           element={<PublicRoute><LoginPage /></PublicRoute>} />
@@ -68,6 +70,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );

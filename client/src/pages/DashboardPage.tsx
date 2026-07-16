@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
-import { Spinner } from '../components/ui';
+import { Spinner, useToast } from '../components/ui';
 import { useAuth } from '../hooks/useAuth';
 import { bankApi } from '../lib/api';
 
@@ -27,6 +27,7 @@ function fmt(iso: string) {
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate  = useNavigate();
+  const toast     = useToast();
   const [total,   setTotal]   = useState<number | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -43,7 +44,10 @@ export default function DashboardPage() {
     setDeleting(uploadId);
     try {
       await bankApi.deleteUpload(uploadId);
+      toast('Upload deleted', 'success');
       loadData();
+    } catch {
+      toast('Failed to delete upload', 'error');
     } finally {
       setDeleting(null);
     }

@@ -2,7 +2,7 @@
 // Shared UI primitives
 // All components are intentionally small and composable.
 // ─────────────────────────────────────────────────────────────────────────────
-import { ReactNode } from 'react';
+import { ReactNode, createContext, useContext, useState, useCallback, useRef } from 'react';
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 export function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
@@ -135,4 +135,54 @@ export function InlineAlert({ variant, children }: { variant: AlertVariant; chil
 // ── Divider ───────────────────────────────────────────────────────────────────
 export function Divider() {
   return <hr className="border-surface-100" />;
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+type ToastType = 'success' | 'error' | 'info';
+interface ToastItem { id: number; message: string; type: ToastType; }
+
+const ToastCtx = createContext<(msg: string, type?: ToastType) => void>(() => {});
+
+const TOAST_CLS: Record<ToastType, string> = {
+  success: 'bg-emerald-600',
+  error:   'bg-rose-600',
+  info:    'bg-slate-800',
+};
+
+const TOAST_ICON: Record<ToastType, string> = {
+  success: '✓',
+  error:   '✕',
+  info:    'ℹ',
+};
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const ref = useRef(0);
+
+  const toast = useCallback((message: string, type: ToastType = 'info') => {
+    const id = ++ref.current;
+    setToasts(p => [...p, { id, message, type }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3500);
+  }, []);
+
+  return (
+    <ToastCtx.Provider value={toast}>
+      {children}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none" aria-live="polite">
+        {toasts.map(t => (
+          <div
+            key={t.id}
+            className={`animate-toast-in flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-lg shadow-xl text-sm font-medium text-white ${TOAST_CLS[t.type]}`}
+          >
+            <span className="text-xs opacity-80 font-bold">{TOAST_ICON[t.type]}</span>
+            {t.message}
+          </div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+
+export function useToast() {
+  return useContext(ToastCtx);
 }

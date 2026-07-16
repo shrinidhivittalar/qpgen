@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
-import { Spinner } from '../components/ui';
+import { Spinner, useToast } from '../components/ui';
 import { bankApi } from '../lib/api';
 import type { BankQuestion, QuestionType } from '../types';
 import { QUESTION_TYPE_LABELS } from '../types';
@@ -91,6 +91,7 @@ function EditForm({
 export default function VerifyPage() {
   const { uploadId } = useParams<{ uploadId: string }>();
   const navigate = useNavigate();
+  const toast    = useToast();
 
   const [questions, setQuestions] = useState<BankQuestion[]>([]);
   const [loading,   setLoading]   = useState(true);
@@ -123,6 +124,9 @@ export default function VerifyPage() {
     try {
       await bankApi.patchQuestion(id, { action: 'accept', ...updates });
       removeQuestion(id);
+      toast('Question accepted', 'success');
+    } catch {
+      toast('Failed to accept question', 'error');
     } finally {
       setSaving(false);
     }
@@ -133,6 +137,9 @@ export default function VerifyPage() {
     try {
       await bankApi.patchQuestion(id, { action: 'reject' });
       removeQuestion(id);
+      toast('Question rejected', 'info');
+    } catch {
+      toast('Failed to reject question', 'error');
     } finally {
       setSaving(false);
     }
@@ -147,20 +154,27 @@ export default function VerifyPage() {
     if (!uploadId) return;
     setBulking(true);
     try {
-      await bankApi.bulkAccept(uploadId);
+      const { accepted } = await bankApi.bulkAccept(uploadId);
+      toast(`${accepted} questions accepted`, 'success');
       navigate('/bank');
+    } catch {
+      toast('Failed to accept questions', 'error');
     } finally {
       setBulking(false);
     }
   };
 
   const bulkAcceptSelected = async () => {
+    const count = selected.size;
     setBulking(true);
     try {
       await Promise.all([...selected].map(id => bankApi.patchQuestion(id, { action: 'accept' })));
       setQuestions(prev => prev.filter(q => !selected.has(q._id)));
-      setVerified(v => v + selected.size);
+      setVerified(v => v + count);
       setSelected(new Set());
+      toast(`${count} question${count !== 1 ? 's' : ''} accepted`, 'success');
+    } catch {
+      toast('Failed to accept selected questions', 'error');
     } finally {
       setBulking(false);
     }

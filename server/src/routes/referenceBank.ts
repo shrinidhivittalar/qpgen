@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
+import { Types } from 'mongoose';
 
 import { extractText } from '../ai/extractor.js';
 import { parsePaperIntoQuestions } from '../ai/paperParser.js';
@@ -167,7 +168,7 @@ router.get('/questions', async (req: Request, res: Response) => {
 
 router.get('/uploads', async (req: Request, res: Response) => {
   const uploads = await ReferenceExemplar.aggregate([
-    { $match: { teacherId: req.userId } },
+    { $match: { teacherId: new Types.ObjectId(req.userId) } },
     { $group: {
       _id:       '$uploadId',
       total:     { $sum: 1 },
