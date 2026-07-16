@@ -31,13 +31,26 @@ export interface ParsedQuestion {
   confidence:   number;
 }
 
+// ponytail: rule-based confidence; upgrade to ML scorer if false-positive rate becomes a problem
+const QUESTION_WORDS = /^(what|why|how|who|when|where|which|define|explain|list|describe|state)\b/i;
+
+function computeConfidence(rawText: string, questionType: string, marks: number | null): number {
+  const t = rawText.trim();
+  let score = 0.65;
+  if (t.length < 30)                                          score -= 0.40;
+  if (t.toLowerCase().startsWith('or ') || t === 'OR')       score -= 0.30;
+  if (/\?/.test(t) || QUESTION_WORDS.test(t))                score += 0.10;
+  if (marks !== null)                                         score += 0.10;
+  if (questionType === 'multipleChoice' && /\bA[).]\s/.test(t)) score += 0.15;
+  return Math.min(1, Math.max(0, score));
+}
+
 const PAPER_PARSE_PROMPT = `You parse exam question papers into individual questions.
 
 For each distinct question found, output exactly one JSON object with these fields:
   "questionType": one of: fillInBlanks | multipleChoice | multiSelect | matchTheFollowing | reordering | sorting | trueFalse | shortAnswer | longAnswer
   "rawText": the complete question text (for MCQ include all option labels and text verbatim)
   "marks": number of marks for this question (integer), or null if not determinable. Look for inline cues like "[1 Mark]", "(2 marks)", "1 mark each", section headers like "Section A — 1 mark each".
-  "confidence": float 0.0–1.0 — how confident you are this is a complete, well-formed, standalone question. Low confidence if: truncated, garbled text, clearly a heading/instruction, OCR artifacts present.
 
 TYPE MAPPING:
   multipleChoice   → single-answer MCQ with options (A)(B)(C)(D)
@@ -74,15 +87,19 @@ export async function parsePaperIntoQuestions(text: string): Promise<ParsedQuest
   const raw    = response.choices[0]?.message?.content ?? '';
   const parsed = parseAiJsonArray(raw);
 
-  return (parsed as any[]).filter(
-    (item): item is ParsedQuestion =>
+  return (parsed as any[])
+    .filter(item =>
       VALID_TYPES.includes(item?.questionType) &&
       typeof item?.rawText === 'string' &&
-      item.rawText.trim().length > 0 &&
-      typeof item?.confidence === 'number',
-  ).map(item => ({
-    ...item,
-    marks:      typeof item.marks === 'number' ? item.marks : null,
-    confidence: Math.min(1, Math.max(0, item.confidence)),
-  }));
+      item.rawText.trim().length > 0,
+    )
+    .map(item => {
+      const marks = typeof item.marks === 'number' ? item.marks : null;
+      return {
+        questionType: item.questionType as ValidType,
+        rawText:      item.rawText as string,
+        marks,
+        confidence:   computeConfidence(item.rawText, item.questionType, marks),
+      };
+    });
 }
