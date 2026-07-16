@@ -30,8 +30,8 @@ function handleUpload(req: Request, res: Response): Promise<void> {
 }
 
 const UploadBodySchema = z.object({
-  subject:    z.string().optional(),
-  class:      z.string().optional(),
+  subject:    z.string().min(1),
+  class:      z.string().min(1),
   chapter:    z.string().optional(),
   sourceYear: z.coerce.number().int().min(1900).max(2100).optional(),
 });

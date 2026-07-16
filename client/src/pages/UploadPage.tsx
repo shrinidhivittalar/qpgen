@@ -6,6 +6,15 @@ import { bankApi } from '../lib/api';
 
 type Step = 'idle' | 'uploading' | 'reading' | 'extracting' | 'error';
 
+const SUBJECTS = [
+  'English', 'Mathematics', 'Science', 'Social Science',
+  'Physics', 'Chemistry', 'Biology', 'Computer Science',
+  'History', 'Geography', 'Economics', 'Political Science',
+  'Hindi', 'Kannada', 'Sanskrit',
+];
+
+const CLASSES = Array.from({ length: 12 }, (_, i) => `Class ${i + 1}`);
+
 const STEPS = [
   { key: 'uploading',   label: 'Uploading' },
   { key: 'reading',     label: 'Reading Paper' },
@@ -72,9 +81,9 @@ export default function UploadPage() {
 
     try {
       const fd = new FormData();
-      fd.append('file', file);
-      if (subject) fd.append('subject',    subject);
-      if (cls)     fd.append('class',      cls);
+      fd.append('file',    file);
+      fd.append('subject', subject);
+      fd.append('class',   cls);
       if (chapter) fd.append('chapter',    chapter);
       if (year)    fd.append('sourceYear', year);
 
@@ -164,22 +173,28 @@ export default function UploadPage() {
         {/* Metadata fields */}
         {!isProcessing && file && (
           <div className="card p-5 mb-6">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">Paper Details <span className="font-normal normal-case text-slate-400">(optional)</span></p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">Paper Details</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="form-label" htmlFor="subject">Subject</label>
-                <input id="subject" className="form-input" placeholder="e.g. Physics" value={subject} onChange={e => setSubject(e.target.value)} />
+                <label className="form-label" htmlFor="subject">Subject <span className="text-rose-500">*</span></label>
+                <select id="subject" className="form-input" value={subject} onChange={e => setSubject(e.target.value)}>
+                  <option value="">Select subject</option>
+                  {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
               <div>
-                <label className="form-label" htmlFor="class">Class / Grade</label>
-                <input id="class" className="form-input" placeholder="e.g. Grade 10" value={cls} onChange={e => setCls(e.target.value)} />
+                <label className="form-label" htmlFor="class">Class <span className="text-rose-500">*</span></label>
+                <select id="class" className="form-input" value={cls} onChange={e => setCls(e.target.value)}>
+                  <option value="">Select class</option>
+                  {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div>
-                <label className="form-label" htmlFor="chapter">Chapter / Topic</label>
+                <label className="form-label" htmlFor="chapter">Chapter / Topic <span className="text-slate-400 font-normal">(optional)</span></label>
                 <input id="chapter" className="form-input" placeholder="e.g. Chapter 3 — Motion" value={chapter} onChange={e => setChapter(e.target.value)} />
               </div>
               <div>
-                <label className="form-label" htmlFor="year">Year</label>
+                <label className="form-label" htmlFor="year">Year <span className="text-slate-400 font-normal">(optional)</span></label>
                 <input id="year" className="form-input" placeholder="e.g. 2023" value={year} onChange={e => setYear(e.target.value)} maxLength={4} />
               </div>
             </div>
@@ -219,7 +234,7 @@ export default function UploadPage() {
         {!isProcessing && (
           <button
             onClick={handleUpload}
-            disabled={!file}
+            disabled={!file || !subject || !cls}
             className="btn-primary w-full justify-center py-2.5"
           >
             Analyse Paper
