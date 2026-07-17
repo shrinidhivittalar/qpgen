@@ -25,23 +25,28 @@ const VALID_TYPES = [
 type ValidType = typeof VALID_TYPES[number];
 
 export interface ParsedQuestion {
-  questionType: ValidType;
-  rawText:      string;
-  marks:        number | null;
-  confidence:   number;
+  questionType:  ValidType;
+  rawText:       string;
+  marks:         number | null;
+  confidence:    number;
+  isImageBased:  boolean;
 }
 
 // ponytail: rule-based confidence; upgrade to ML scorer if false-positive rate becomes a problem
 const QUESTION_WORDS = /^(what|why|how|who|when|where|which|define|explain|list|describe|state)\b/i;
+// matches questions that REFERENCE an existing figure/table in the paper (not "draw a diagram" type)
+const IMAGE_REF = /\b(shown below|given below|below figure|below table|following figure|following diagram|following table|observe the (figure|diagram|circuit|graph|chart|table)|refer to (the )?(figure|diagram|circuit|graph|chart|table)|the above (figure|diagram|circuit|graph|chart|table)|adjacent (figure|diagram)|the figure|the diagram|the circuit|the graph|the chart|the table)\b/i;
 
 function computeConfidence(rawText: string, questionType: string, marks: number | null): number {
   const t = rawText.trim();
   let score = 0.65;
-  if (t.length < 30)                                          score -= 0.40;
-  if (t.toLowerCase().startsWith('or ') || t === 'OR')       score -= 0.30;
-  if (/\?/.test(t) || QUESTION_WORDS.test(t))                score += 0.10;
-  if (marks !== null)                                         score += 0.10;
+  if (t.length < 30)                                             score -= 0.40;
+  if (t.toLowerCase().startsWith('or ') || t === 'OR')          score -= 0.30;
+  if (/\?/.test(t) || QUESTION_WORDS.test(t))                   score += 0.10;
+  if (marks !== null)                                            score += 0.10;
   if (questionType === 'multipleChoice' && /\bA[).]\s/.test(t)) score += 0.15;
+  // image-dependent questions must always go to verify — teacher needs to see the figure
+  if (IMAGE_REF.test(t)) score = Math.min(score, 0.60);
   return Math.min(1, Math.max(0, score));
 }
 
@@ -96,10 +101,11 @@ export async function parsePaperIntoQuestions(text: string): Promise<ParsedQuest
     .map(item => {
       const marks = typeof item.marks === 'number' ? item.marks : null;
       return {
-        questionType: item.questionType as ValidType,
-        rawText:      item.rawText as string,
+        questionType:  item.questionType as ValidType,
+        rawText:       item.rawText as string,
         marks,
-        confidence:   computeConfidence(item.rawText, item.questionType, marks),
+        confidence:    computeConfidence(item.rawText, item.questionType, marks),
+        isImageBased:  IMAGE_REF.test(item.rawText as string),
       };
     });
 }

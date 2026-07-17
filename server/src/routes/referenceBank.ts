@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { Types } from 'mongoose';
 
-import { extractText } from '../ai/extractor.js';
+import { extractText, extractPdfPages, findQuestionPage } from '../ai/extractor.js';
 import { parsePaperIntoQuestions } from '../ai/paperParser.js';
 import { ReferenceExemplar } from '../models/ReferenceExemplar.js';
+import { uploadSourceFile, supabaseConfigured } from '../lib/supabase.js';
 import { logger } from '../lib/logger.js';
 
 const CONFIDENCE_THRESHOLD = 0.75;
@@ -89,23 +90,82 @@ router.post('/upload', async (req: Request, res: Response) => {
   }
 
   const uploadId = nanoid();
+
+  // upload source image to Supabase for image-based papers (JPG/PNG)
+  let sourceImageUrl: string | null = null;
+  const isPdf = req.file.mimetype === 'application/pdf';
+
+  if (supabaseConfigured()) {
+    try {
+      sourceImageUrl = await uploadSourceFile(uploadId, req.file.buffer, req.file.mimetype);
+    } catch (err) {
+      logger.warn('supabase_upload_failed', { uploadId, err });
+    }
+  }
+
+  // extract per-page images via PyMuPDF and match each image-based question to its page
+  const questionImageUrls: (string | null)[] = questions.map(() => null);
+  if (isPdf && supabaseConfigured()) {
+    try {
+      const pages = await extractPdfPages(req.file.buffer);
+
+      // step 1: find each image-based question's page
+      const questionPages = questions.map(q =>
+        q.isImageBased ? findQuestionPage(q.rawText, pages) : null
+      );
+
+      // step 2: group question indices by page (preserving order — questions appear top-to-bottom, as do images)
+      const pageQueues = new Map<number, number[]>();
+      for (let i = 0; i < questions.length; i++) {
+        const page = questionPages[i];
+        if (!page || page.images.length === 0) continue;
+        if (!pageQueues.has(page.pageIndex)) pageQueues.set(page.pageIndex, []);
+        pageQueues.get(page.pageIndex)!.push(i);
+      }
+
+      // step 3: for each page, assign images to questions in order (1st question → 1st image, etc.)
+      const uploaded = new Map<string, string>();
+      await Promise.all([...pageQueues.entries()].map(async ([pageIndex, qIdxs]) => {
+        const page = pages.find(p => p.pageIndex === pageIndex)!;
+        for (let rank = 0; rank < qIdxs.length; rank++) {
+          const img = page.images[rank] ?? page.images[page.images.length - 1];
+          const imgKey = `${pageIndex}-${Math.min(rank, page.images.length - 1)}`;
+          if (!uploaded.has(imgKey)) {
+            try {
+              const url = await uploadSourceFile(`${uploadId}/img-${imgKey}`, img.pngBuffer, 'image/png');
+              uploaded.set(imgKey, url);
+            } catch (err) {
+              logger.warn('supabase_page_image_upload_failed', { uploadId, imgKey, err });
+              continue;
+            }
+          }
+          questionImageUrls[qIdxs[rank]] = uploaded.get(imgKey) ?? null;
+        }
+      }));
+    } catch (err) {
+      logger.warn('pdf_image_extraction_failed', { uploadId, err });
+    }
+  }
+
   const sharedMeta = {
-    teacherId: req.userId,
+    teacherId:     req.userId,
     uploadId,
-    subject:    subject    ?? null,
-    class:      cls        ?? null,
-    chapter:    chapter    ?? null,
-    sourceYear: sourceYear ?? null,
+    subject:       subject    ?? null,
+    class:         cls        ?? null,
+    chapter:       chapter    ?? null,
+    sourceYear:    sourceYear ?? null,
+    sourceImageUrl,
   };
 
   await ReferenceExemplar.insertMany(
-    questions.map(q => ({
+    questions.map((q, i) => ({
       ...sharedMeta,
-      questionType: q.questionType,
-      rawText:      q.rawText,
-      marks:        q.marks,
-      confidence:   q.confidence,
-      status:       q.confidence >= CONFIDENCE_THRESHOLD ? 'accepted' : 'needs_review',
+      questionType:     q.questionType,
+      rawText:          q.rawText,
+      marks:            q.marks,
+      confidence:       q.confidence,
+      status:           q.confidence >= CONFIDENCE_THRESHOLD ? 'accepted' : 'needs_review',
+      questionImageUrl: questionImageUrls[i],
     })),
   );
 
@@ -113,15 +173,18 @@ router.post('/upload', async (req: Request, res: Response) => {
   const needsReview  = questions.length - autoAccepted;
 
   logger.info('reference_bank_uploaded', {
-    requestId: req.requestId,
-    userId:    req.userId,
+    requestId:      req.requestId,
+    userId:         req.userId,
     uploadId,
-    total:     questions.length,
+    total:          questions.length,
     autoAccepted,
     needsReview,
+    sourceImageUrl,
+    supabaseReady:  supabaseConfigured(),
+    fileType:       req.file.mimetype,
   });
 
-  res.status(201).json({ uploadId, totalExtracted: questions.length, autoAccepted, needsReview });
+  res.status(201).json({ uploadId, totalExtracted: questions.length, autoAccepted, needsReview, sourceImageUrl });
 });
 
 // ── GET /api/reference-bank/stats ────────────────────────────────────────────
@@ -170,16 +233,17 @@ router.get('/uploads', async (req: Request, res: Response) => {
   const uploads = await ReferenceExemplar.aggregate([
     { $match: { teacherId: new Types.ObjectId(req.userId) } },
     { $group: {
-      _id:       '$uploadId',
-      total:     { $sum: 1 },
-      accepted:  { $sum: { $cond: [{ $eq: ['$status', 'accepted'] }, 1, 0] } },
-      subject:   { $first: '$subject' },
-      class:     { $first: '$class' },
-      createdAt: { $min: '$createdAt' },
+      _id:            '$uploadId',
+      total:          { $sum: 1 },
+      accepted:       { $sum: { $cond: [{ $eq: ['$status', 'accepted'] }, 1, 0] } },
+      subject:        { $first: '$subject' },
+      class:          { $first: '$class' },
+      createdAt:      { $min: '$createdAt' },
+      sourceImageUrl: { $first: '$sourceImageUrl' },
     }},
     { $sort: { createdAt: -1 } },
   ]);
-  res.json(uploads.map(u => ({ uploadId: u._id, total: u.total, accepted: u.accepted, subject: u.subject, class: u.class, createdAt: u.createdAt })));
+  res.json(uploads.map(u => ({ uploadId: u._id, total: u.total, accepted: u.accepted, subject: u.subject, class: u.class, createdAt: u.createdAt, sourceImageUrl: u.sourceImageUrl ?? null })));
 });
 
 // ── DELETE /api/reference-bank/uploads/:uploadId ─────────────────────────────
