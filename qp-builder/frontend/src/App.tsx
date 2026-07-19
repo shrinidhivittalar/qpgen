@@ -1,16 +1,19 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload } from './api'
+import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion } from './api'
 import { QuestionBank } from './components/QuestionBank'
 import { PaperBuilder } from './components/PaperBuilder'
 import { UploadReviewModal } from './components/UploadReviewModal'
+import { AutoGenerateModal } from './components/AutoGenerateModal'
+import { mathToHtml } from './components/MathText'
 import type { BankQuestion, PaperItem, PaperTab, RawQuestion } from './types'
 import { MARKS_DEFAULT } from './types'
-import { cleanText, jaccardSimilarity } from './utils'
+import { cleanText, jaccardSimilarity, mkUid } from './utils'
 
 export type ExportCol = 'num' | 'question' | 'marks' | 'source'
 
-const mkUid   = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-const newTab  = (title = 'New Paper'): PaperTab => ({ id: mkUid(), title, items: [] })
+const newTab = (title = 'New Paper'): PaperTab => ({ id: mkUid(), title, items: [] })
+const escHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 type BankCache = Record<string, BankQuestion[]>
 
@@ -23,6 +26,7 @@ export default function App() {
   // ── Question bank cache ───────────────────────────────────────────────
   const [bankCache, setBankCache]     = useState<BankCache>({})
   const [loading, setLoading]         = useState(false)
+  const [bankError, setBankError]     = useState<string | null>(null)
 
   // ── Search / filter ───────────────────────────────────────────────────
   const [search, setSearch]           = useState('')
@@ -38,7 +42,7 @@ export default function App() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [saving, setSaving]           = useState(false)
   const [uploadPreview, setUploadPreview] = useState<{
-    name: string; raw: RawQuestion[]; warnings: string[]
+    upload_id: string; name: string; raw: RawQuestion[]; warnings: string[]
   } | null>(null)
   // id -> { name, count }
   const [uploadedSources, setUploadedSources] =
@@ -49,6 +53,9 @@ export default function App() {
   // pending merge dialog
   const [mergeDialog, setMergeDialog] =
     useState<{ id: string; name: string; target: string } | null>(null)
+
+  // ── Auto-generate ─────────────────────────────────────────────────────
+  const [showAutoGenerate, setShowAutoGenerate] = useState(false)
 
   // ── Export ────────────────────────────────────────────────────────────
   const [exportCols, setExportCols]   = useState<Set<ExportCol>>(
@@ -85,14 +92,21 @@ export default function App() {
       .catch(console.error)
   }, [])
 
+  // ── Reset filters when subject/source changes ─────────────────────────
+  useEffect(() => {
+    setSearch('')
+    setTypeFilter('all')
+  }, [subject, source])
+
   // ── Load questions when subject/source changes ────────────────────────
   useEffect(() => {
     if (bankCache[bankKey]) return   // already in cache
+    setBankError(null)
     setLoading(true)
     const key = bankKey  // capture at effect run time
     fetchQuestions(subject, source)
       .then(qs => setBankCache(prev => ({ ...prev, [key]: qs })))
-      .catch(console.error)
+      .catch(() => setBankError('Failed to load questions — check the server is running.'))
       .finally(() => setLoading(false))
   }, [bankKey, subject, source])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -171,7 +185,10 @@ export default function App() {
   }, [])
 
   // ── Question handlers ─────────────────────────────────────────────────
-  const paperQids = new Set(paper.map(i => `${i.subject}:${i.source}:${i.qid}`))
+  const paperQids = useMemo(
+    () => new Set(paper.map(i => `${i.subject}:${i.source}:${i.qid}`)),
+    [paper]
+  )
 
   const handleToggle = useCallback((q: BankQuestion) => {
     const key = `${subject}:${source}:${q.qid}`
@@ -232,6 +249,7 @@ export default function App() {
       text,
       originalText: text,
       type:         'custom',
+      options:      null,
       has_figure:   false,
       has_table:    false,
       images:       [],
@@ -243,8 +261,83 @@ export default function App() {
 
   const handleReorder = useCallback((items: PaperItem[]) => setItems(() => items), [setItems])
 
+  const handleAutoGenerate = useCallback((items: PaperItem[]) => {
+    setItems(prev => [...prev, ...items])
+    setShowAutoGenerate(false)
+  }, [setItems])
+
+  // ── Delete a source (uploaded paper OR static subject/source) ────────
+  const handleDeleteSource = useCallback(async (subj: string, src: string) => {
+    if (subj === 'uploaded') {
+      try { await deleteUpload(src) } catch { return }
+      setUploadedSources(prev => { const n = { ...prev }; delete n[src]; return n })
+      setBankCache(prev => { const n = { ...prev }; delete n[`uploaded/${src}`]; return n })
+      if (subject === 'uploaded' && source === src) {
+        const firstSubj = Object.keys(subjectMap)[0]
+        if (firstSubj) {
+          setSubject(firstSubj)
+          setSource(Object.keys(subjectMap[firstSubj])[0] ?? 'qp')
+        }
+      }
+    } else {
+      try { await deleteQuestionSource(subj, src) } catch { return }
+      setBankCache(prev => { const n = { ...prev }; delete n[`${subj}/${src}`]; return n })
+      setSubjectMap(prev => {
+        const next    = { ...prev }
+        const srcMap  = { ...next[subj] }
+        delete srcMap[src]
+        if (Object.keys(srcMap).length === 0) delete next[subj]
+        else next[subj] = srcMap
+        return next
+      })
+      // Navigate away if currently viewing the deleted source
+      if (subject === subj && source === src) {
+        const remaining = Object.keys(subjectMap[subj] ?? {}).filter(s => s !== src)
+        if (remaining.length > 0) {
+          setSource(remaining[0])
+        } else {
+          const nextSubj = Object.keys(subjectMap).find(s => s !== subj)
+          if (nextSubj) { setSubject(nextSubj); setSource(Object.keys(subjectMap[nextSubj])[0] ?? 'qp') }
+        }
+      }
+    }
+  }, [subject, source, subjectMap])
+
+  // ── Delete individual question from uploaded bank ─────────────────────
+  const handleDeleteBankQuestion = useCallback(async (qid: string) => {
+    const key = `${subject}/${source}`
+    setBankCache(prev => ({
+      ...prev,
+      [key]: (prev[key] ?? []).filter(q => q.qid !== qid),
+    }))
+    try {
+      await deleteBankQuestion(source, qid)
+    } catch {
+      // Force refetch on failure
+      setBankCache(prev => { const n = { ...prev }; delete n[key]; return n })
+    }
+  }, [subject, source])
+
+  // ── Edit individual question in uploaded bank ─────────────────────────
+  const handleEditBankQuestion = useCallback(async (
+    qid: string, text: string, type: import('./types').QuestionType
+  ) => {
+    const key = `${subject}/${source}`
+    setBankCache(prev => ({
+      ...prev,
+      [key]: (prev[key] ?? []).map(q =>
+        q.qid === qid ? { ...q, text, type, has_figure: type === 'figure_based' } : q
+      ),
+    }))
+    try {
+      await editBankQuestion(source, qid, text, type)
+    } catch {
+      setBankCache(prev => { const n = { ...prev }; delete n[key]; return n })
+    }
+  }, [subject, source])
+
   // ── Upload rename with merge detection ────────────────────────────────
-  const handleRenameUpload = useCallback((id: string, name: string) => {
+  const handleRenameUpload = useCallback(async (id: string, name: string) => {
     const trimmed = name.trim()
     if (!trimmed) return
     const collision = Object.keys(subjectMap).find(
@@ -253,10 +346,15 @@ export default function App() {
     if (collision) {
       setMergeDialog({ id, name: trimmed, target: collision })
     } else {
-      setUploadedSources(prev => ({ ...prev, [id]: { ...prev[id], name: trimmed } }))
-      renameUpload(id, trimmed).catch(console.error)  // persist to MongoDB
+      const oldName = uploadedSources[id]?.name ?? trimmed
+      setUploadedSources(cur => ({ ...cur, [id]: { ...cur[id], name: trimmed } }))
+      try {
+        await renameUpload(id, trimmed)
+      } catch {
+        setUploadedSources(cur => ({ ...cur, [id]: { ...cur[id], name: oldName } }))
+      }
     }
-  }, [subjectMap])
+  }, [subjectMap, uploadedSources])
 
   // Confirm / cancel the merge dialog
   const handleMerge = useCallback((confirmed: boolean) => {
@@ -293,7 +391,12 @@ export default function App() {
     setUploadError(null)
     try {
       const result = await uploadPaper(file, paperType)
-      setUploadPreview(result)
+      setUploadPreview({
+        upload_id: result.upload_id,
+        name:      result.name,
+        raw:       result.raw,
+        warnings:  result.warnings,
+      })
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -305,8 +408,18 @@ export default function App() {
   const handleConfirmUpload = useCallback(async (name: string, questions: RawQuestion[]) => {
     setSaving(true)
     setUploadError(null)
+
+    // Auto-disambiguate if a paper with this name already exists
+    let finalName = name
+    const existingNames = Object.values(uploadedSources).map(u => u.name.toLowerCase())
+    if (existingNames.includes(name.toLowerCase())) {
+      let i = 2
+      while (existingNames.includes(`${name} (${i})`.toLowerCase())) i++
+      finalName = `${name} (${i})`
+    }
+
     try {
-      const result = await confirmUpload(name, questions)
+      const result = await confirmUpload(uploadPreview?.upload_id ?? '', finalName, questions)
       // Don't pre-populate bankCache here — let the useEffect fetch naturally
       // after subject/source change. This avoids stale-closure timing issues.
       setUploadedSources(prev => ({
@@ -322,7 +435,7 @@ export default function App() {
     } finally {
       setSaving(false)
     }
-  }, [])
+  }, [uploadedSources])
 
   // ── Similarity maps ───────────────────────────────────────────────────
   const similarityMap = useMemo(() => {
@@ -371,7 +484,8 @@ export default function App() {
     const win = window.open('', '_blank')
     if (!win) return
     const totalMarks = paper.reduce((s, i) => s + i.marks, 0)
-    const apiBase    = 'http://localhost:5050'
+    const supabase   = import.meta.env.VITE_SUPABASE_IMAGES_URL
+    const imgBase    = supabase || 'http://localhost:5050/api/images'
     const cols       = exportCols
 
     const thCells = [
@@ -387,12 +501,12 @@ export default function App() {
         ? 'Custom'
         : `Q${item.number} (${item.subject} / ${srcLabel})`
       const imgs = item.images.map(img =>
-        `<img src="${apiBase}/api/images/${item.subject}/${item.source}/${img.file}"
+        `<img src="${imgBase}/${item.subject}/${item.source}/${img.file}"
               style="max-width:320px;height:auto;display:block;margin-top:8px;border:1px solid #ddd;padding:4px"/>`
       ).join('')
       const tdCells = [
         cols.has('num')      && `<td>${idx + 1}</td>`,
-        cols.has('question') && `<td style="white-space:pre-wrap">${cleanText(item.text)}${imgs}</td>`,
+        cols.has('question') && `<td style="white-space:pre-wrap">${mathToHtml(cleanText(item.text))}${imgs}</td>`,
         cols.has('marks')    && `<td>${item.marks}</td>`,
         cols.has('source')   && `<td><span style="font-size:11px;color:#555">${qLabel}</span></td>`,
       ].filter(Boolean).join('')
@@ -401,6 +515,7 @@ export default function App() {
 
     win.document.write(`<!doctype html><html><head>
       <title>${paperTitle}</title>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
       <style>
         body{font-family:Arial,sans-serif;padding:32px;color:#111}
         h1{font-size:20px;text-align:center;margin-bottom:4px}
@@ -410,7 +525,7 @@ export default function App() {
         th{background:#f5f5f5}
         @media print{body{padding:16px}}
       </style></head><body>
-      <h1>${paperTitle}</h1>
+      <h1>${escHtml(paperTitle)}</h1>
       <p class="meta">Total Marks: ${totalMarks} &nbsp;|&nbsp; Questions: ${paper.length}</p>
       <table>
         <thead><tr>${thCells}</tr></thead>
@@ -422,11 +537,13 @@ export default function App() {
   }, [paper, paperTitle, exportCols, sourceLabels])
 
   // ── Filtered bank ─────────────────────────────────────────────────────
-  const visibleQuestions = bankQuestions.filter(q => {
-    const matchType   = typeFilter === 'all' || q.type === typeFilter
-    const matchSearch = !search || q.text.toLowerCase().includes(search.toLowerCase())
-    return matchType && matchSearch
-  })
+  const visibleQuestions = useMemo(() =>
+    bankQuestions.filter(q => {
+      const matchType   = typeFilter === 'all' || q.type === typeFilter
+      const matchSearch = !search || q.text.toLowerCase().includes(search.toLowerCase())
+      return matchType && matchSearch
+    }),
+  [bankQuestions, typeFilter, search])
 
   const totalMarks = paper.reduce((s, i) => s + i.marks, 0)
 
@@ -472,10 +589,14 @@ export default function App() {
           paperQids={paperQids}
           onToggle={handleToggle}
           loading={loading}
+          bankError={bankError}
           uploading={uploading}
           uploadError={uploadError}
           onUpload={handleUpload}
           onRenameUpload={handleRenameUpload}
+          onDeleteSource={handleDeleteSource}
+          onDeleteBankQuestion={handleDeleteBankQuestion}
+          onEditBankQuestion={handleEditBankQuestion}
           similarityMap={similarityMap}
           crossSourceMap={crossSourceMap}
         />
@@ -500,18 +621,35 @@ export default function App() {
           onAddCustom={handleAddCustom}
           onReorder={handleReorder}
           onExport={handleExport}
+          onAutoGenerate={() => setShowAutoGenerate(true)}
+          canAutoGenerate={bankQuestions.length > 0}
+          onClearPaper={() => setItems(() => [])}
         />
       </div>
 
       {/* ── Upload review modal ──────────────────────────────────────────── */}
       {uploadPreview && (
         <UploadReviewModal
+          upload_id={uploadPreview.upload_id}
           name={uploadPreview.name}
           questions={uploadPreview.raw}
           warnings={uploadPreview.warnings}
           saving={saving}
           onConfirm={handleConfirmUpload}
           onCancel={() => setUploadPreview(null)}
+        />
+      )}
+
+      {/* ── Auto-generate modal ─────────────────────────────────────────── */}
+      {showAutoGenerate && (
+        <AutoGenerateModal
+          subject={subject}
+          source={source}
+          sourceLabel={sourceLabels[source] ?? (source === 'qp' ? 'Question Paper' : source)}
+          allQuestions={bankQuestions}
+          paperQids={paperQids}
+          onGenerate={handleAutoGenerate}
+          onCancel={() => setShowAutoGenerate(false)}
         />
       )}
 

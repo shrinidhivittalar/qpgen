@@ -1,3 +1,5 @@
+export const mkUid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+
 // Strips leading original number and collapses split MCQ options ("(A) \ntext" -> "(A) text")
 export function cleanText(text: string): string {
   return text
@@ -15,11 +17,16 @@ const STOP_WORDS = new Set([
 ])
 
 function tokenize(text: string): Set<string> {
+  // Preserve LaTeX content as opaque tokens before stripping special chars.
+  // e.g. $x^2+1$ -> "x21", $\ce{H2SO4}$ -> "h2so4" — so math differs are detected.
+  const processed = text
+    .toLowerCase()
+    .replace(/\$\\ce\{([^}]+)\}/g, (_, c) => ' ' + c.replace(/[^a-z0-9]/g, '') + ' ')
+    .replace(/\$([^$\n]+)\$/g,     (_, m) => ' ' + m.replace(/[^a-z0-9]/g, '') + ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+
   return new Set(
-    text.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 3 && !STOP_WORDS.has(w))
+    processed.split(/\s+/).filter(w => w.length > 2 && !STOP_WORDS.has(w))
   )
 }
 

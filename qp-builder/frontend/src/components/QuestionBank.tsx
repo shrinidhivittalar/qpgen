@@ -3,6 +3,12 @@ import { TYPE_LABELS, TYPE_COLORS } from '../types'
 import type { BankQuestion, QuestionType } from '../types'
 import { BankCard } from './BankCard'
 
+type SortBy = 'number' | 'type'
+
+const TYPE_SORT_ORDER: Record<string, number> = {
+  mcq: 0, text: 1, figure_based: 2, table_based: 3, multi_part: 4,
+}
+
 const QP_TYPES: QuestionType[]       = ['mcq', 'text', 'figure_based', 'table_based', 'multi_part']
 const TEXTBOOK_TYPES: QuestionType[] = ['mcq', 'text']
 const UPLOADED_TYPES: QuestionType[] = ['mcq', 'text', 'figure_based']
@@ -30,13 +36,17 @@ interface Props {
   setTypeFilter:   (t: string) => void
   paperQids:       Set<string>
   onToggle:        (q: BankQuestion) => void
-  loading:         boolean
-  uploading:       boolean
-  uploadError:     string | null
-  onUpload:        (file: File, paperType: string) => void
-  onRenameUpload:  (id: string, name: string) => void
-  similarityMap:   Record<string, number>
-  crossSourceMap:  Record<string, { sim: number; src: string }>
+  loading:              boolean
+  bankError:            string | null
+  uploading:            boolean
+  uploadError:          string | null
+  onUpload:             (file: File, paperType: string) => void
+  onRenameUpload:       (id: string, name: string) => void
+  onDeleteSource:       (subject: string, source: string) => void
+  onDeleteBankQuestion: (qid: string) => void
+  onEditBankQuestion:   (qid: string, text: string, type: QuestionType) => void
+  similarityMap:        Record<string, number>
+  crossSourceMap:       Record<string, { sim: number; src: string }>
 }
 
 export function QuestionBank({
@@ -44,8 +54,9 @@ export function QuestionBank({
   subject, setSubject, source, setSource,
   lockedSubject, onNewPaper,
   questions, allQuestions, search, setSearch, typeFilter, setTypeFilter,
-  paperQids, onToggle, loading,
-  uploading, uploadError, onUpload, onRenameUpload,
+  paperQids, onToggle, loading, bankError,
+  uploading, uploadError, onUpload, onRenameUpload, onDeleteSource,
+  onDeleteBankQuestion, onEditBankQuestion,
   similarityMap, crossSourceMap,
 }: Props) {
   const fileInputRef    = useRef<HTMLInputElement>(null)
@@ -81,6 +92,10 @@ export function QuestionBank({
   const isTextbook = source === 'textbook'
   const isUploaded = subject === 'uploaded'
 
+  // ── Sort ──────────────────────────────────────────────────────────────
+  const [sortBy, setSortBy] = useState<SortBy>('number')
+  useEffect(() => { setSortBy('number') }, [source, subject])
+
   // ── Chapter filter ────────────────────────────────────────────────────
   const [chapterFilter, setChapterFilter] = useState('all')
   useEffect(() => { setChapterFilter('all') }, [source, subject])
@@ -96,10 +111,19 @@ export function QuestionBank({
     return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([ch]) => ch)
   }, [allQuestions, isTextbook])
 
-  const visibleQuestions = useMemo(() => {
+  const filteredQuestions = useMemo(() => {
     if (!isTextbook || chapterFilter === 'all') return questions
     return questions.filter(q => q.chapter === chapterFilter)
   }, [questions, chapterFilter, isTextbook])
+
+  const visibleQuestions = useMemo(() => {
+    if (sortBy === 'type') {
+      return [...filteredQuestions].sort(
+        (a, b) => (TYPE_SORT_ORDER[a.type] ?? 5) - (TYPE_SORT_ORDER[b.type] ?? 5)
+      )
+    }
+    return [...filteredQuestions].sort((a, b) => a.number - b.number)
+  }, [filteredQuestions, sortBy])
 
   const allowedTypes = isUploaded ? UPLOADED_TYPES : isTextbook ? TEXTBOOK_TYPES : QP_TYPES
   const typeCounts   = Object.fromEntries(
@@ -141,7 +165,7 @@ export function QuestionBank({
             ))}
           </select>
 
-          {/* Rename button for the currently-viewed upload */}
+          {/* Rename button — uploaded papers only */}
           {isUploaded && !renamingUpload && (
             <button
               onClick={startRename}
@@ -150,6 +174,25 @@ export function QuestionBank({
                          text-gray-500 hover:bg-gray-100 transition"
             >
               Rename
+            </button>
+          )}
+
+          {/* Delete button — all sources (uploaded + static) */}
+          {!renamingUpload && (
+            <button
+              onClick={() => {
+                const label = isUploaded
+                  ? 'this uploaded paper and all its questions'
+                  : `all ${subject} / ${srcLabel(source)} questions`
+                if (window.confirm(`Delete ${label}? This cannot be undone.`)) {
+                  onDeleteSource(subject, source)
+                }
+              }}
+              title="Delete this source"
+              className="shrink-0 px-2 py-1.5 text-xs rounded-md border border-red-200
+                         text-red-500 hover:bg-red-50 transition"
+            >
+              Delete
             </button>
           )}
 
@@ -303,8 +346,8 @@ export function QuestionBank({
         </div>
       )}
 
-      {/* ── Search ──────────────────────────────────────────────────────── */}
-      <div className="px-3 pt-3 pb-2 shrink-0">
+      {/* ── Search + Sort ────────────────────────────────────────────────── */}
+      <div className="px-3 pt-3 pb-2 shrink-0 flex gap-2">
         <input
           type="text"
           placeholder={
@@ -314,9 +357,19 @@ export function QuestionBank({
           }
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md
+          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md
                      focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as SortBy)}
+          title="Sort questions"
+          className="shrink-0 px-2 py-2 text-xs border border-gray-300 rounded-md bg-white
+                     focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        >
+          <option value="number">No. ↑</option>
+          <option value="type">Type</option>
+        </select>
       </div>
 
       {/* ── Type filter pills ────────────────────────────────────────────── */}
@@ -352,6 +405,10 @@ export function QuestionBank({
           <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
             Loading questions...
           </div>
+        ) : bankError ? (
+          <div className="mx-1 mt-2 px-3 py-2 rounded-md bg-red-50 border border-red-200 text-xs text-red-700">
+            {bankError}
+          </div>
         ) : visibleQuestions.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
             No questions match.
@@ -370,6 +427,8 @@ export function QuestionBank({
                 paperSimilarity={similarityMap[q.qid] ?? 0}
                 crossSimilarity={crossSourceMap[q.qid] ?? null}
                 onToggle={() => onToggle(q)}
+                onDeleteQuestion={isUploaded ? () => onDeleteBankQuestion(q.qid) : undefined}
+                onEditQuestion={isUploaded ? (text, type) => onEditBankQuestion(q.qid, text, type) : undefined}
               />
             ))}
           </ul>

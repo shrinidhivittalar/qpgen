@@ -6,3 +6,4 @@ dist/
 __pycache__/
 *.pyc
 qp-builder/frontend/dist/
+scripts/latexify_backup_*.json

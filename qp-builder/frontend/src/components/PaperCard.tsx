@@ -5,6 +5,7 @@ import { TYPE_LABELS, TYPE_COLORS } from '../types'
 import type { PaperItem } from '../types'
 import { imageUrl } from '../api'
 import { cleanText } from '../utils'
+import { MathText } from './MathText'
 
 interface Props {
   item:           PaperItem
@@ -120,7 +121,7 @@ export function PaperCard({
             </div>
           ) : (
             <p className={`text-gray-800 leading-snug whitespace-pre-wrap ${isRephrasing ? 'opacity-50' : ''}`}>
-              {isRephrasing ? 'Rephrasing...' : displayText}
+              {isRephrasing ? 'Rephrasing...' : <MathText text={displayText} />}
             </p>
           )}
 

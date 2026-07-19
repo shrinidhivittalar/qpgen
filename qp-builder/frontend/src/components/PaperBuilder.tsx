@@ -46,6 +46,9 @@ interface Props {
   onAddCustom:         (text: string) => void
   onReorder:           (paper: PaperItem[]) => void
   onExport:            () => void
+  onAutoGenerate:      () => void
+  canAutoGenerate:     boolean
+  onClearPaper:        () => void
 }
 
 export function PaperBuilder({
@@ -53,7 +56,7 @@ export function PaperBuilder({
   exportCols, onToggleExportCol,
   onSwitchPaper, onNewPaper, onCloseTab, onRenameTab,
   onRemove, onRephrase, onUndoRephrase, onMarksChange, onTextChange,
-  onAddCustom, onReorder, onExport,
+  onAddCustom, onReorder, onExport, onAutoGenerate, canAutoGenerate, onClearPaper,
 }: Props) {
   const [customText, setCustomText]         = useState('')
   const [showCustomForm, setShowCustomForm] = useState(false)
@@ -176,6 +179,29 @@ export function PaperBuilder({
           </span>
         </div>
         <div className="flex items-center gap-2 ml-3 relative">
+          <button
+            onClick={onAutoGenerate}
+            disabled={!canAutoGenerate}
+            title={canAutoGenerate ? 'Auto-generate paper from bank' : 'Load a question bank first'}
+            className="px-3 py-1.5 text-xs rounded-md border border-indigo-300 text-indigo-600
+                       hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            ✦ Auto-Generate
+          </button>
+          {paper.length > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Clear all ${paper.length} questions from this paper?`)) {
+                  onClearPaper()
+                }
+              }}
+              title="Remove all questions from this paper"
+              className="px-3 py-1.5 text-xs rounded-md border border-red-200 text-red-500
+                         hover:bg-red-50 transition"
+            >
+              Clear
+            </button>
+          )}
           <button
             onClick={() => setShowCustomForm(v => !v)}
             className="px-3 py-1.5 text-xs rounded-md border border-gray-300 text-gray-600

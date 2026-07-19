@@ -25,6 +25,7 @@ export interface BankQuestion {
   number:     number
   text:       string
   type:       QuestionType
+  options:    string[] | null   // MCQ options A/B/C/D
   has_figure: boolean
   has_table:  boolean
   images:     ImageEntry[]
@@ -55,12 +56,14 @@ export interface RawQuestion {
   text:    string
   type:    'mcq' | 'figure_based' | 'text'
   options: string[] | null
+  images:  { fid: string; file: string }[]
 }
 
 export interface UploadParseResult {
-  name:     string
-  raw:      RawQuestion[]
-  warnings: string[]
+  upload_id: string
+  name:      string
+  raw:       RawQuestion[]
+  warnings:  string[]
 }
 
 export const MARKS_DEFAULT: Record<string, number> = {

@@ -54,25 +54,56 @@ export async function uploadPaper(file: File, paperType: string): Promise<Upload
 }
 
 // Step 2: save reviewed questions to DB
-export async function confirmUpload(name: string, questions: RawQuestion[]): Promise<UploadResult> {
+export async function confirmUpload(
+  upload_id: string, name: string, questions: RawQuestion[]
+): Promise<UploadResult> {
   const res = await fetch('/api/upload/confirm', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ name, questions }),
+    body:    JSON.stringify({ upload_id, name, questions }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Save failed')
   return data as UploadResult
 }
 
+export async function deleteUpload(id: string): Promise<void> {
+  const res = await fetch(`/api/uploads/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Delete failed')
+}
+
+export async function deleteQuestionSource(subject: string, source: string): Promise<void> {
+  const res = await fetch(`/api/questions/${subject}/${source}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Delete failed')
+}
+
+export async function editBankQuestion(
+  uploadId: string, qid: string, text: string, type: string
+): Promise<void> {
+  const res = await fetch(`/api/uploads/${uploadId}/questions/${qid}`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ text, type }),
+  })
+  if (!res.ok) throw new Error('Edit failed')
+}
+
+export async function deleteBankQuestion(uploadId: string, qid: string): Promise<void> {
+  const res = await fetch(`/api/uploads/${uploadId}/questions/${qid}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Delete failed')
+}
+
 export async function renameUpload(id: string, name: string): Promise<void> {
-  await fetch(`/api/uploads/${id}`, {
+  const res = await fetch(`/api/uploads/${id}`, {
     method:  'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ name }),
   })
+  if (!res.ok) throw new Error('Rename failed')
 }
 
 export function imageUrl(subject: string, source: string, filename: string): string {
-  return `/api/images/${subject}/${source}/${filename}`
+  const base = import.meta.env.VITE_SUPABASE_IMAGES_URL
+  if (base) return `${base}/${subject}/${source}/${filename}`
+  return `/api/images/${subject}/${source}/${filename}`  // local fallback
 }

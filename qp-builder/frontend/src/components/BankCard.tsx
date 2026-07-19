@@ -1,34 +1,108 @@
+import { useState } from 'react'
 import { TYPE_LABELS, TYPE_COLORS } from '../types'
-import type { BankQuestion } from '../types'
+import type { BankQuestion, QuestionType } from '../types'
 import { imageUrl } from '../api'
 import { cleanText } from '../utils'
+import { MathText } from './MathText'
 
 const STATIC_SOURCE_LABELS: Record<string, string> = { qp: 'QP', textbook: 'Textbook' }
 
+const EDITABLE_TYPES: QuestionType[] = ['mcq', 'text', 'figure_based']
+
 interface Props {
-  question:        BankQuestion
-  subject:         string
-  source:          string
-  sourceLabels:    Record<string, string>   // id -> custom name for uploads/merged
-  added:           boolean
-  locked:          boolean
-  paperSimilarity: number
-  crossSimilarity: { sim: number; src: string } | null
-  onToggle:        () => void
+  question:          BankQuestion
+  subject:           string
+  source:            string
+  sourceLabels:      Record<string, string>
+  added:             boolean
+  locked:            boolean
+  paperSimilarity:   number
+  crossSimilarity:   { sim: number; src: string } | null
+  onToggle:          () => void
+  onDeleteQuestion?: () => void
+  onEditQuestion?:   (text: string, type: QuestionType) => void
 }
 
 export function BankCard({
   question: q, subject, source, sourceLabels, added, locked,
   paperSimilarity, crossSimilarity, onToggle,
+  onDeleteQuestion, onEditQuestion,
 }: Props) {
+  const [expanded, setExpanded] = useState(false)
+  const [editing,  setEditing]  = useState(false)
+  const [editText, setEditText] = useState('')
+  const [editType, setEditType] = useState<QuestionType>(q.type)
+
   const srcLabel = (src: string) => sourceLabels[src] ?? STATIC_SOURCE_LABELS[src] ?? src
-  const canAdd = !locked
+  const canAdd   = !locked
+  const isUploaded = subject === 'uploaded'
+  const ct = cleanText(q.text)
+  const isLong = ct.length > 150
 
   const simLevel =
     paperSimilarity >= 0.6 ? 'high'
     : paperSimilarity >= 0.3 ? 'medium'
     : null
 
+  const startEdit = () => {
+    setEditText(ct)
+    setEditType(q.type)
+    setEditing(true)
+  }
+
+  const saveEdit = () => {
+    if (editText.trim() && onEditQuestion) {
+      onEditQuestion(editText.trim(), editType)
+    }
+    setEditing(false)
+  }
+
+  const cancelEdit = () => setEditing(false)
+
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  if (editing) {
+    return (
+      <li className="rounded-lg border border-indigo-300 bg-indigo-50 p-3 text-sm space-y-2">
+        <textarea
+          value={editText}
+          onChange={e => setEditText(e.target.value)}
+          rows={4}
+          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md resize-y
+                     focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          autoFocus
+        />
+        <div className="flex items-center gap-2">
+          <select
+            value={editType}
+            onChange={e => setEditType(e.target.value as QuestionType)}
+            className="flex-1 px-2 py-1.5 text-xs border border-gray-300 rounded-md bg-white
+                       focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            {EDITABLE_TYPES.map(t => (
+              <option key={t} value={t}>{TYPE_LABELS[t]}</option>
+            ))}
+          </select>
+          <button
+            onClick={saveEdit}
+            disabled={!editText.trim()}
+            className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white font-medium
+                       hover:bg-indigo-700 disabled:opacity-40 transition"
+          >
+            Save
+          </button>
+          <button
+            onClick={cancelEdit}
+            className="px-3 py-1.5 text-xs rounded-md border border-gray-300 text-gray-600
+                       hover:bg-gray-100 transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </li>
+    )
+  }
+
+  // ── Normal view ────────────────────────────────────────────────────────────
   return (
     <li
       className={`rounded-lg border p-3 text-sm transition
@@ -43,10 +117,11 @@ export function BankCard({
     >
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
+
           {/* Header row */}
           <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
             <span className="text-xs font-semibold text-gray-400">
-              {q.chapter ? `${q.chapter}` : `Q${q.number}`}
+              {q.chapter ? q.chapter : `Q${q.number}`}
             </span>
             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_COLORS[q.type]}`}>
               {TYPE_LABELS[q.type]}
@@ -61,6 +136,30 @@ export function BankCard({
             )}
             {q.has_table && (
               <span className="px-2 py-0.5 rounded-full text-xs bg-purple-50 text-purple-600 border border-purple-200">table</span>
+            )}
+
+            {/* Edit / Delete controls — uploaded questions only */}
+            {isUploaded && (
+              <div className="ml-auto flex items-center gap-1">
+                {onEditQuestion && (
+                  <button
+                    onClick={startEdit}
+                    title="Edit question"
+                    className="text-gray-300 hover:text-indigo-500 transition text-xs px-1"
+                  >
+                    ✎
+                  </button>
+                )}
+                {onDeleteQuestion && (
+                  <button
+                    onClick={onDeleteQuestion}
+                    title="Delete question"
+                    className="text-gray-300 hover:text-red-400 transition text-xs px-1"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -80,21 +179,43 @@ export function BankCard({
             </div>
           )}
           {crossSimilarity && !added && (
-            <div className="flex items-center gap-1 text-xs rounded-md px-2 py-1 mb-1.5
-                            bg-blue-50 text-blue-700"
-            >
+            <div className="flex items-center gap-1 text-xs rounded-md px-2 py-1 mb-1.5 bg-blue-50 text-blue-700">
               <span>~</span>
               <span>
-                Similar to a {srcLabel(crossSimilarity.src)} question
-                {' '}already in your paper ({Math.round(crossSimilarity.sim * 100)}% match)
+                Similar to a {srcLabel(crossSimilarity.src)} question already in your paper
+                ({Math.round(crossSimilarity.sim * 100)}% match)
               </span>
             </div>
           )}
 
           {/* Question text */}
-          <p className="text-gray-700 leading-snug line-clamp-3">
-            {cleanText(q.text) || <em className="text-gray-400">No text</em>}
+          <p className={`text-gray-700 leading-snug ${expanded ? '' : 'line-clamp-3'}`}>
+            {ct ? <MathText text={ct} /> : <em className="text-gray-400">No text</em>}
           </p>
+
+          {/* Expand / collapse */}
+          {isLong && (
+            <button
+              onClick={() => setExpanded(p => !p)}
+              className="mt-1 text-xs text-indigo-500 hover:text-indigo-700 transition"
+            >
+              {expanded ? 'Show less ▲' : 'Show more ▼'}
+            </button>
+          )}
+
+          {/* MCQ options */}
+          {q.type === 'mcq' && q.options && q.options.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5 pl-0.5">
+              {q.options.map((opt, i) => (
+                <li key={i} className="flex items-baseline gap-1 text-xs text-gray-500">
+                  <span className="shrink-0 font-medium text-gray-400">
+                    {String.fromCharCode(65 + i)}.
+                  </span>
+                  <MathText text={opt} />
+                </li>
+              ))}
+            </ul>
+          )}
 
           {/* Figures */}
           {q.images.length > 0 && (

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import type { RawQuestion } from '../types'
 import { TYPE_LABELS, TYPE_COLORS } from '../types'
+import { imageUrl } from '../api'
 
 interface Props {
+  upload_id: string
   name:      string
   questions: RawQuestion[]
   warnings:  string[]
@@ -11,7 +13,7 @@ interface Props {
   onCancel:  () => void
 }
 
-export function UploadReviewModal({ name: initialName, questions: initial, warnings, saving, onConfirm, onCancel }: Props) {
+export function UploadReviewModal({ upload_id, name: initialName, questions: initial, warnings, saving, onConfirm, onCancel }: Props) {
   const [name, setName]           = useState(initialName)
   const [questions, setQuestions] = useState(initial)
 
@@ -60,7 +62,21 @@ export function UploadReviewModal({ name: initialName, questions: initial, warni
                                flex items-center justify-center text-xs font-medium text-gray-500">
                 {q.number}
               </span>
-              <p className="flex-1 min-w-0 text-sm text-gray-800 line-clamp-2">{q.text}</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-800 line-clamp-2">{q.text}</p>
+                {q.images && q.images.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {q.images.map(img => (
+                      <img
+                        key={img.fid}
+                        src={imageUrl('uploaded', upload_id, img.file)}
+                        alt={img.fid}
+                        className="h-12 w-auto rounded border border-gray-200 object-contain bg-gray-50"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
               <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium
                                ${TYPE_COLORS[q.type] ?? 'bg-gray-100 text-gray-600'}`}>
                 {TYPE_LABELS[q.type] ?? q.type}
