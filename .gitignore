@@ -25,8 +25,8 @@ parsed_output_*/
 # ── Uploaded files ────────────────────────────────────────────────────────────
 uploads/
 
-# ── Source PDFs in scripts (large binaries) ───────────────────────────────────
-scripts/*.pdf
+# ── Scripts (local data pipeline — not part of the app) ──────────────────────
+scripts/
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
