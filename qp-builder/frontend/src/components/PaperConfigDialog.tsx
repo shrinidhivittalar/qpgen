@@ -8,6 +8,7 @@ interface Props {
   config:        PaperConfiguration
   computedMarks: number
   questionCount: number
+  lockedSubject: string | null
   sections:      PaperSection[]
   items:         PaperItem[]
   onExport:      (config: PaperConfiguration) => void
@@ -135,9 +136,13 @@ const INPUT = inputCls(false)
 // ── Dialog ────────────────────────────────────────────────────────────────────
 
 export function PaperConfigDialog({
-  config, computedMarks, questionCount, sections, items, onExport, onCancel,
+  config, computedMarks, questionCount, lockedSubject, sections, items, onExport, onCancel,
 }: Props) {
-  const [draft, setDraft] = useState<PaperConfiguration>(() => ({ ...config }))
+  const [draft, setDraft] = useState<PaperConfiguration>(() => ({
+    ...config,
+    subject:    config.subject    || lockedSubject || '',
+    totalMarks: config.totalMarks || computedMarks,
+  }))
 
   // Field-level required checks — shown as red * + red border, not as a list
   const fieldErr = {
@@ -163,8 +168,8 @@ export function PaperConfigDialog({
   function handleExport() {
     const final: PaperConfiguration = {
       ...draft,
-      totalMarks:      draft.totalMarks      || computedMarks,
-      totalQuestions:  draft.totalQuestions  || questionCount,
+      totalMarks:      draft.totalMarks || computedMarks,
+      totalQuestions:  draft.totalQuestions || questionCount,
       instructions:    (draft.instructions ?? []).filter(Boolean),
     }
     onExport(final)
@@ -205,7 +210,7 @@ export function PaperConfigDialog({
                 School
               </p>
               <div className="space-y-3">
-                <Field label="School Name">
+                <Field label="School Name" required>
                   <input
                     className={INPUT}
                     value={draft.schoolName}
@@ -238,7 +243,7 @@ export function PaperConfigDialog({
                 Exam
               </p>
               <div className="space-y-3">
-                <Field label="Exam Name">
+                <Field label="Exam Name" required>
                   <input
                     className={INPUT}
                     value={draft.examName}
@@ -247,7 +252,7 @@ export function PaperConfigDialog({
                   />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Academic Year">
+                  <Field label="Academic Year" required>
                     <input
                       className={INPUT}
                       value={draft.academicYear ?? ''}
@@ -255,7 +260,7 @@ export function PaperConfigDialog({
                       placeholder="e.g. 2024-25"
                     />
                   </Field>
-                  <Field label="Board / University">
+                  <Field label="Board / University" required>
                     <input
                       className={INPUT}
                       value={draft.boardName ?? ''}
@@ -297,7 +302,7 @@ export function PaperConfigDialog({
                     placeholder="e.g. A"
                   />
                 </Field>
-                <Field label="Date">
+                <Field label="Date" required>
                   <input
                     className={INPUT}
                     value={draft.date ?? ''}
@@ -315,7 +320,8 @@ export function PaperConfigDialog({
                 </Field>
                 <Field
                   label="Maximum Marks"
-                  hint={draft.totalMarks ? undefined : `Defaults to ${computedMarks} (sum of question marks)`}
+                  required
+                  hint={draft.totalMarks !== computedMarks ? `Computed: ${computedMarks} (sum of question marks)` : undefined}
                 >
                   <input
                     className={INPUT}
@@ -353,7 +359,7 @@ export function PaperConfigDialog({
                     }
                   />
                 </Field>
-                <Field label="Footer / Prepared By">
+                <Field label="Footer / Prepared By" required>
                   <input
                     className={INPUT}
                     value={draft.footerText ?? ''}

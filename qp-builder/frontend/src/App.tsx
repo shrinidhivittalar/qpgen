@@ -724,6 +724,7 @@ export default function App() {
           config={paperConfig}
           computedMarks={paper.reduce((s, i) => s + i.marks, 0)}
           questionCount={paper.length}
+          lockedSubject={lockedSubject}
           sections={activePaper.sections}
           items={paper}
           onExport={handleConfirmExport}

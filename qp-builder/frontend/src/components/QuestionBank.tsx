@@ -98,40 +98,19 @@ export function QuestionBank({
   const sources    = Object.keys(subjectMap[subject] ?? {})
   const isTextbook = source === 'textbook'
   const isUploaded = subject === 'uploaded'
-  const hasChapters = allQuestions.some(q => q.chapter_num != null)
 
   // ── Sort ──────────────────────────────────────────────────────────────
   const [sortBy, setSortBy] = useState<SortBy>('number')
   useEffect(() => { setSortBy('number') }, [source, subject])
 
-  // ── Chapter filter ────────────────────────────────────────────────────
-  const [chapterFilter, setChapterFilter] = useState('all')
-  useEffect(() => { setChapterFilter('all') }, [source, subject])
-
-  const chapters = useMemo(() => {
-    if (!hasChapters) return []
-    const seen = new Map<string, number>()
-    for (const q of allQuestions) {
-      if (q.chapter && q.chapter_num != null && !seen.has(q.chapter)) {
-        seen.set(q.chapter, q.chapter_num ?? 0)
-      }
-    }
-    return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([ch]) => ch)
-  }, [allQuestions, hasChapters])
-
-  const filteredQuestions = useMemo(() => {
-    if (!hasChapters || chapterFilter === 'all') return questions
-    return questions.filter(q => q.chapter === chapterFilter)
-  }, [questions, chapterFilter, hasChapters])
-
   const visibleQuestions = useMemo(() => {
     if (sortBy === 'type') {
-      return [...filteredQuestions].sort(
+      return [...questions].sort(
         (a, b) => (TYPE_SORT_ORDER[a.type] ?? 5) - (TYPE_SORT_ORDER[b.type] ?? 5)
       )
     }
-    return [...filteredQuestions].sort((a, b) => a.number - b.number)
-  }, [filteredQuestions, sortBy])
+    return [...questions].sort((a, b) => a.number - b.number)
+  }, [questions, sortBy])
 
   // Build type filter list dynamically from what's actually in the bank
   const allowedTypes = useMemo(() => {
@@ -335,27 +314,6 @@ export function QuestionBank({
           >
             + New paper
           </button>
-        </div>
-      )}
-
-      {/* ── Chapter filter ───────────────────────────────────────────────── */}
-      {hasChapters && chapters.length > 0 && (
-        <div className="px-3 pt-3 pb-1 shrink-0">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-gray-500 whitespace-nowrap">Chapter:</label>
-            <select
-              value={chapterFilter}
-              onChange={e => setChapterFilter(e.target.value)}
-              className="flex-1 px-2 py-1.5 text-xs border border-gray-300 rounded-md bg-white
-                         focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <option value="all">All chapters ({allQuestions.length})</option>
-              {chapters.map(ch => {
-                const count = allQuestions.filter(q => q.chapter === ch).length
-                return <option key={ch} value={ch}>{ch} ({count})</option>
-              })}
-            </select>
-          </div>
         </div>
       )}
 
