@@ -1,9 +1,9 @@
-# ── Dependencies ─────────────────────────────────────────────────────────────
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
 
 # ── Build outputs ─────────────────────────────────────────────────────────────
 dist/
-qp-builder/frontend/dist/
+*.tsbuildinfo
 
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
@@ -18,15 +18,17 @@ __pycache__/
 venv/
 .venv/
 
-# ── Parsed output & data dirs (large, regenerable) ───────────────────────────
+# ── Parsed output & data dirs (large, regenerable) ────────────────────────────
 parsed_output/
 parsed_output_*/
 
-# ── Uploaded files (local server storage) ────────────────────────────────────
-qp-builder/uploads/
+# ── Uploaded files ────────────────────────────────────────────────────────────
 uploads/
 
-# ── Logs ─────────────────────────────────────────────────────────────────────
+# ── Source PDFs in scripts (large binaries) ───────────────────────────────────
+scripts/*.pdf
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
 
@@ -34,10 +36,16 @@ logs/
 .vite/
 .cache/
 
-# ── Claude Code project settings (machine-local) ─────────────────────────────
+# ── Claude Code project settings (machine-local) ──────────────────────────────
 .claude/
 
-# ── Misc ─────────────────────────────────────────────────────────────────────
+# ── Working / session notes (not source code) ─────────────────────────────────
+DECISIONS.md
+FULL_CONTEXT.md
+PIVOT_CONTEXT.md
+SESSION_NOTES.md
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
 scripts/latexify_backup_*.json
 *.DS_Store
 Thumbs.db
