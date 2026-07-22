@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion } from './api'
+import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion, getMe, logout, User } from './api'
 import { QuestionBank } from './components/QuestionBank'
 import { PaperBuilder } from './components/PaperBuilder'
 import { UploadReviewModal } from './components/UploadReviewModal'
@@ -8,6 +8,8 @@ import { AutoGenerateModal } from './components/AutoGenerateModal'
 import { Dashboard } from './components/Dashboard'
 import { DashboardUploadModal } from './components/DashboardUploadModal'
 import { PaperConfigDialog } from './components/PaperConfigDialog'
+import { Login } from './components/Login'
+import { Signup } from './components/Signup'
 import type { BankQuestion, PaperItem, PaperSection, PaperTab, RawQuestion, PaperConfiguration } from './types'
 import { MARKS_DEFAULT, DEFAULT_PAPER_CONFIG } from './types'
 import { cleanText, jaccardSimilarity, mkUid } from './utils'
@@ -18,14 +20,55 @@ const newTab = (title = 'New Paper'): PaperTab => ({ id: mkUid(), title, items: 
 type BankCache = Record<string, BankQuestion[]>
 
 export default function App() {
+  // ── Authentication State ──────────────────────────────────────────────
+  const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authScreen, setAuthScreen] = useState<'login' | 'signup'>('login')
+
+  const handleLoginSuccess = (newToken: string, loggedInUser: User) => {
+    localStorage.setItem('token', newToken)
+    setToken(newToken)
+    setUser(loggedInUser)
+  }
+
   // ── Routing ───────────────────────────────────────────────────────────
   const navigate = useNavigate()
   const location = useLocation()
   const view = location.pathname === '/builder' ? 'builder' : 'dashboard'
   const goTo  = useCallback((path: '/' | '/builder') => navigate(path), [navigate])
 
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout()
+    } catch (e) {
+      console.error(e)
+    }
+    localStorage.removeItem('token')
+    setToken(null)
+    setUser(null)
+    goTo('/')
+  }, [goTo])
+
+  useEffect(() => {
+    if (token) {
+      getMe()
+        .then(u => setUser(u))
+        .catch(() => {
+          localStorage.removeItem('token')
+          setToken(null)
+          setUser(null)
+        })
+        .finally(() => setAuthLoading(false))
+    } else {
+      setUser(null)
+      setAuthLoading(false)
+    }
+  }, [token])
+
   // ── Dashboard upload modal ────────────────────────────────────────────
   const [showDashboardUpload, setShowDashboardUpload] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   // ── Subject / source selection ─────────────────────────────────────────
   const [subjectMap, setSubjectMap]   = useState<Record<string, Record<string, number>>>({})
@@ -564,46 +607,68 @@ export default function App() {
 
   const totalMarks = paper.reduce((s, i) => s + i.marks, 0)
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f5f3ef]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    if (authScreen === 'login') {
+      return <Login onLoginSuccess={handleLoginSuccess} onGoToSignup={() => setAuthScreen('signup')} />
+    }
+    return <Signup onSignupSuccess={handleLoginSuccess} onGoToLogin={() => setAuthScreen('login')} />
+  }
+
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <header className="flex items-center justify-between px-6 py-3 bg-indigo-700 text-white shadow-md shrink-0">
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-screen bg-[#f5f3ef] font-sans antialiased text-stone-900">
+      <header className="flex items-center justify-between px-6 py-2.5 bg-[#faf9f7] border-b border-stone-200 shrink-0">
+        <div className="flex items-center gap-4">
           <button
             onClick={() => goTo('/')}
-            className="text-xl font-bold tracking-tight hover:text-indigo-200 transition-colors
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white
-                       focus-visible:ring-offset-2 focus-visible:ring-offset-indigo-700 rounded"
+            className="text-sm font-semibold tracking-tight text-stone-900 hover:opacity-80 transition-opacity"
           >
-            QP Builder
+            QP Generator
           </button>
-          <span className="text-indigo-300 text-sm">MVP</span>
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">
+            {user.role}
+          </span>
           {view === 'builder' && (
             <button
               onClick={() => goTo('/')}
-              className="text-xs text-indigo-300 hover:text-white transition-colors
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white
-                         focus-visible:ring-offset-1 focus-visible:ring-offset-indigo-700 rounded px-1"
+              className="text-xs text-stone-500 hover:text-stone-900 transition-colors"
             >
-              ← Home
+              ← Back to Dashboard
             </button>
           )}
         </div>
         <div className="flex items-center gap-4">
           {view === 'builder' && (
-            <>
-              <span className="text-sm text-indigo-200">
-                {paper.length} question{paper.length !== 1 ? 's' : ''} · {totalMarks} marks
-              </span>
-              <button
-                onClick={handleExport}
-                disabled={paper.length === 0}
-                className="px-4 py-1.5 bg-white text-indigo-700 rounded-md text-sm font-medium
-                           hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              >
-                Export / Print
-              </button>
-            </>
+            <span className="text-xs text-stone-400 font-mono">
+              {paper.length} Qs · {totalMarks} Marks
+            </span>
           )}
+          {view === 'builder' && (
+            <button
+              onClick={handleExport}
+              disabled={paper.length === 0}
+              className="px-3 py-1 bg-stone-900 text-white rounded-md text-xs font-medium hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              Export
+            </button>
+          )}
+          <div className="h-4 w-[1px] bg-stone-200" />
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-stone-500 font-medium">{user.username}</span>
+            <button
+              onClick={handleLogout}
+              className="text-xs text-stone-400 hover:text-red-500 font-medium transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -616,6 +681,7 @@ export default function App() {
           onUploadBank={() => setShowDashboardUpload(true)}
           onGenerateFromBlueprint={() => {}}
           onOpenPaper={(id) => { setActiveId(id); goTo('/builder') }}
+          user={user}
         />
       ) : (
       <div className="flex flex-1 overflow-hidden">
@@ -648,6 +714,7 @@ export default function App() {
           onEditBankQuestion={handleEditBankQuestion}
           similarityMap={similarityMap}
           crossSourceMap={crossSourceMap}
+          user={user}
         />
         <PaperBuilder
           papers={papers}
@@ -678,6 +745,7 @@ export default function App() {
           onAutoGenerate={() => setShowAutoGenerate(true)}
           canAutoGenerate={bankQuestions.length > 0}
           onClearPaper={() => setItems(() => [])}
+          user={user}
         />
       </div>
       )}

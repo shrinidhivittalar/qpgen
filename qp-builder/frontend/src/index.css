@@ -1,9 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 html, body, #root {
   height: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: #f5f3ef;
+  color: #1c1917;
+}
+
+/* Custom sleek scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6d3cd;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b9b5ae;
 }
 
 .drag-handle {
@@ -11,4 +32,9 @@ html, body, #root {
 }
 .drag-handle:active {
   cursor: grabbing;
+}
+
+/* Input/select aesthetic improvements */
+input, select, textarea {
+  transition: all 0.15s ease;
 }

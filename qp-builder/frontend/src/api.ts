@@ -1,19 +1,66 @@
 import type { BankQuestion, RawQuestion, UploadParseResult } from './types'
 
+async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
+  const token = localStorage.getItem('token')
+  const headers = new Headers(init?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  return fetch(url, { ...init, headers })
+}
+
+export interface User {
+  username: string
+  role: 'Admin' | 'Teacher' | 'Viewer'
+}
+
+export async function login(username: string, password: string): Promise<{ token: string; user: User }> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Login failed')
+  return data
+}
+
+export async function signup(username: string, password: string, role: string): Promise<{ token: string; user: User }> {
+  const res = await fetch('/api/auth/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, role })
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Signup failed')
+  return data
+}
+
+export async function getMe(): Promise<User> {
+  const res = await authedFetch('/api/auth/me')
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Failed to authenticate')
+  return data as User
+}
+
+export async function logout(): Promise<void> {
+  await authedFetch('/api/auth/logout', { method: 'POST' })
+}
+
 export async function fetchSubjects(): Promise<Record<string, Record<string, number>>> {
-  const res = await fetch('/api/subjects')
+  const res = await authedFetch('/api/subjects')
   if (!res.ok) throw new Error('Failed to load subjects')
   return res.json()
 }
 
 export async function fetchQuestions(subject: string, source: string): Promise<BankQuestion[]> {
-  const res = await fetch(`/api/questions/${subject}/${source}`)
+  const res = await authedFetch(`/api/questions/${subject}/${source}`)
   if (!res.ok) throw new Error('Failed to load questions')
   return res.json()
 }
 
 export async function rephraseQuestion(text: string, type: string): Promise<string> {
-  const res = await fetch('/api/rephrase', {
+  const res = await authedFetch('/api/rephrase', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ text, type }),
@@ -37,7 +84,7 @@ export interface UploadMeta {
 }
 
 export async function fetchUploads(): Promise<UploadMeta[]> {
-  const res = await fetch('/api/uploads')
+  const res = await authedFetch('/api/uploads')
   if (!res.ok) throw new Error('Failed to load uploads')
   return res.json()
 }
@@ -47,7 +94,7 @@ export async function uploadPaper(file: File, paperType: string): Promise<Upload
   const form = new FormData()
   form.append('file', file)
   form.append('paper_type', paperType)
-  const res  = await fetch('/api/upload', { method: 'POST', body: form })
+  const res  = await authedFetch('/api/upload', { method: 'POST', body: form })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Upload failed')
   return data as UploadParseResult
@@ -57,7 +104,7 @@ export async function uploadPaper(file: File, paperType: string): Promise<Upload
 export async function confirmUpload(
   upload_id: string, name: string, questions: RawQuestion[]
 ): Promise<UploadResult> {
-  const res = await fetch('/api/upload/confirm', {
+  const res = await authedFetch('/api/upload/confirm', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ upload_id, name, questions }),
@@ -68,19 +115,19 @@ export async function confirmUpload(
 }
 
 export async function deleteUpload(id: string): Promise<void> {
-  const res = await fetch(`/api/uploads/${id}`, { method: 'DELETE' })
+  const res = await authedFetch(`/api/uploads/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Delete failed')
 }
 
 export async function deleteQuestionSource(subject: string, source: string): Promise<void> {
-  const res = await fetch(`/api/questions/${subject}/${source}`, { method: 'DELETE' })
+  const res = await authedFetch(`/api/questions/${subject}/${source}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Delete failed')
 }
 
 export async function editBankQuestion(
   uploadId: string, qid: string, text: string, type: string
 ): Promise<void> {
-  const res = await fetch(`/api/uploads/${uploadId}/questions/${qid}`, {
+  const res = await authedFetch(`/api/uploads/${uploadId}/questions/${qid}`, {
     method:  'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ text, type }),
@@ -89,12 +136,12 @@ export async function editBankQuestion(
 }
 
 export async function deleteBankQuestion(uploadId: string, qid: string): Promise<void> {
-  const res = await fetch(`/api/uploads/${uploadId}/questions/${qid}`, { method: 'DELETE' })
+  const res = await authedFetch(`/api/uploads/${uploadId}/questions/${qid}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Delete failed')
 }
 
 export async function renameUpload(id: string, name: string): Promise<void> {
-  const res = await fetch(`/api/uploads/${id}`, {
+  const res = await authedFetch(`/api/uploads/${id}`, {
     method:  'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ name }),
@@ -121,7 +168,7 @@ export async function classifyQuestions(
   questions: { qid: string; text: string }[],
   chapters:  string[],
 ): Promise<Record<string, string>> {
-  const res  = await fetch('/api/classify-questions', {
+  const res  = await authedFetch('/api/classify-questions', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ questions, chapters }),
@@ -134,7 +181,7 @@ export async function classifyQuestions(
 export async function parseBlueprint(file: File): Promise<ParsedBlueprint> {
   const form = new FormData()
   form.append('file', file)
-  const res  = await fetch('/api/parse-blueprint', { method: 'POST', body: form })
+  const res  = await authedFetch('/api/parse-blueprint', { method: 'POST', body: form })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Blueprint parse failed')
   return data as ParsedBlueprint

@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/sortable'
 import { PaperCard } from './PaperCard'
 import type { PaperItem, PaperSection, PaperTab } from '../types'
+import type { User } from '../api'
 import { mkUid } from '../utils'
 
 interface Props {
@@ -47,16 +48,15 @@ interface Props {
   onAutoGenerate:       () => void
   canAutoGenerate:      boolean
   onClearPaper:         () => void
+  user:                 User
 }
-
-// ── Section edit dialog ───────────────────────────────────────────────────────
 
 interface SectionDraft { title: string; instruction: string; marksPerQ: number }
 
 const DIALOG_INPUT =
-  'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg ' +
-  'focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent ' +
-  'placeholder:text-gray-300 transition'
+  'w-full px-3 py-2 text-xs border border-stone-200 rounded-lg bg-white ' +
+  'text-stone-800 focus:outline-none focus:ring-1 focus:ring-stone-900 ' +
+  'placeholder:text-stone-300 transition'
 
 function SectionEditDialog({
   initial, sectionsCount, onSave, onClose,
@@ -80,15 +80,15 @@ function SectionEditDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-900">
+      <div className="bg-[#faf9f7] rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden border border-stone-200">
+        <div className="px-5 py-4 border-b border-stone-100">
+          <h3 className="text-sm font-semibold text-stone-950">
             {initial ? 'Edit Section' : 'New Section'}
           </h3>
         </div>
-        <div className="px-5 py-4 space-y-3">
+        <div className="px-5 py-4 space-y-4">
           <div>
-            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest block mb-1">
+            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest block mb-1.5">
               Title
             </label>
             <input
@@ -101,7 +101,7 @@ function SectionEditDialog({
             />
           </div>
           <div>
-            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest block mb-1">
+            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest block mb-1.5">
               Instruction
             </label>
             <input
@@ -112,7 +112,7 @@ function SectionEditDialog({
             />
           </div>
           <div>
-            <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest block mb-1">
+            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest block mb-1.5">
               Marks per Question
             </label>
             <input
@@ -124,25 +124,25 @@ function SectionEditDialog({
               onChange={e => set('marksPerQ', parseInt(e.target.value) || 1)}
             />
             {initial && (
-              <p className="text-[10px] text-gray-400 mt-1">
+              <p className="text-[10px] text-zinc-400 mt-1">
                 Changing marks per question will update all questions in this section.
               </p>
             )}
           </div>
         </div>
-        <div className="px-5 py-3 flex justify-end gap-2 bg-gray-50">
+        <div className="px-5 py-3 flex justify-end gap-2 bg-stone-50 border-t border-stone-100">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-sm rounded-lg border border-gray-300
-                       text-gray-700 hover:bg-white transition"
+            className="px-4 py-1.5 text-xs rounded-lg border border-stone-200
+                       text-stone-700 hover:bg-white transition"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={!draft.title.trim()}
-            className="px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white font-medium
-                       hover:bg-indigo-700 disabled:opacity-40 transition"
+            className="px-4 py-1.5 text-xs rounded-lg bg-stone-900 text-white font-medium
+                       hover:opacity-95 disabled:opacity-40 transition"
           >
             {initial ? 'Save Changes' : 'Add Section'}
           </button>
@@ -152,29 +152,61 @@ function SectionEditDialog({
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
 export function PaperBuilder({
-  papers, activeId, paper, paperTitle, setPaperTitle, rephrasing,
-  sections, activeSectionId, onActiveSectionChange,
-  onAddSection, onUpdateSection, onDeleteSection, onMoveToSection,
-  onSwitchPaper, onNewPaper, onCloseTab, onRenameTab,
-  onRemove, onRephrase, onUndoRephrase, onMarksChange, onTextChange,
-  onAddCustom, onReorder, onExport, onAutoGenerate, canAutoGenerate, onClearPaper,
+  papers,
+  activeId,
+  paper,
+  paperTitle,
+  setPaperTitle,
+  rephrasing,
+  sections,
+  activeSectionId,
+  onActiveSectionChange,
+  onAddSection,
+  onUpdateSection,
+  onDeleteSection,
+  onMoveToSection,
+  onSwitchPaper,
+  onNewPaper,
+  onCloseTab,
+  onRenameTab,
+  onRemove,
+  onRephrase,
+  onUndoRephrase,
+  onMarksChange,
+  onTextChange,
+  onAddCustom,
+  onReorder,
+  onExport,
+  onAutoGenerate,
+  canAutoGenerate,
+  onClearPaper,
+  user,
 }: Props) {
-  const [customText, setCustomText]         = useState('')
+  const isViewer = user.role === 'Viewer'
+
+  // Sensors for sortable
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [tabDraft, setTabDraft] = useState('')
+
   const [showCustomForm, setShowCustomForm] = useState(false)
-  const [editingTabId, setEditingTabId]     = useState<string | null>(null)
-  const [tabDraft, setTabDraft]             = useState('')
-  const [sectionDialog, setSectionDialog]   = useState<{
-    mode: 'add' | 'edit'
-    sec:  PaperSection | null
+  const [customText, setCustomText] = useState('')
+
+  const [sectionDialog, setSectionDialog] = useState<{
+    mode: 'add' | 'edit';
+    sec: PaperSection | null;
   } | null>(null)
 
   function startRenameTab(id: string, currentTitle: string, e: React.MouseEvent) {
+    if (isViewer) return
     e.stopPropagation()
-    setEditingTabId(id)
     setTabDraft(currentTitle)
+    setEditingTabId(id)
   }
 
   function commitRename(id: string) {
@@ -183,65 +215,79 @@ export function PaperBuilder({
     setEditingTabId(null)
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const oldIdx = paper.findIndex(i => i.uid === active.id)
-    const newIdx = paper.findIndex(i => i.uid === over.id)
-    if (sections.length > 0) {
-      // Block cross-section drags
-      if (paper[oldIdx]?.sectionId !== paper[newIdx]?.sectionId) return
-    }
-    onReorder(arrayMove(paper, oldIdx, newIdx))
-  }
-
   function submitCustom() {
-    if (!customText.trim()) return
-    onAddCustom(customText.trim())
-    setCustomText('')
-    setShowCustomForm(false)
+    const trimmed = customText.trim()
+    if (trimmed) {
+      onAddCustom(trimmed)
+      setCustomText('')
+      setShowCustomForm(false)
+    }
   }
 
-  function handleSectionSave(draft: SectionDraft) {
-    if (sectionDialog?.mode === 'edit' && sectionDialog.sec) {
-      onUpdateSection(sectionDialog.sec.id, draft)
-    } else {
-      onAddSection({ id: mkUid(), ...draft })
+  function handleSaveSection(draft: SectionDraft) {
+    if (sectionDialog?.mode === 'add') {
+      const newSec: PaperSection = {
+        id:          mkUid(),
+        title:       draft.title,
+        instruction: draft.instruction,
+        marksPerQ:   draft.marksPerQ,
+      }
+      onAddSection(newSec)
+    } else if (sectionDialog?.mode === 'edit' && sectionDialog.sec) {
+      onUpdateSection(sectionDialog.sec.id, {
+        title:       draft.title,
+        instruction: draft.instruction,
+        marksPerQ:   draft.marksPerQ,
+      })
     }
     setSectionDialog(null)
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    if (isViewer) return
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const activeIndex = paper.findIndex(i => i.uid === active.id)
+    const overIndex  = paper.findIndex(i => i.uid === over.id)
+    if (activeIndex === -1 || overIndex === -1) return
+
+    // Verify both items belong to the same section (drag reorder only within sections)
+    const activeItem = paper[activeIndex]
+    const overItem   = paper[overIndex]
+    if (activeItem.sectionId !== overItem.sectionId) return
+
+    const reordered = arrayMove(paper, activeIndex, overIndex)
+    onReorder(reordered)
+  }
+
+  const activePaper  = papers.find(p => p.id === activeId) ?? papers[0]
   const totalMarks   = paper.reduce((s, i) => s + i.marks, 0)
   const hasSections  = sections.length > 0
   const getSecItems  = (id: string) => paper.filter(i => i.sectionId === id)
   const unsectioned  = paper.filter(i => !i.sectionId || !sections.find(s => s.id === i.sectionId))
 
   return (
-    <main className="flex flex-col flex-1 overflow-hidden bg-gray-50">
+    <main className="flex flex-col flex-1 overflow-hidden bg-[#f5f3ef]">
 
       {/* ── Paper tabs ─────────────────────────────────────────────────── */}
-      <div className="flex items-end gap-0 px-3 pt-2 bg-white border-b border-gray-200 shrink-0 overflow-x-auto">
+      <div className="flex items-end gap-0 px-4 pt-2 bg-[#faf9f7] border-b border-stone-200 shrink-0 overflow-x-auto">
         {papers.map(p => (
           <div
             key={p.id}
             onClick={() => onSwitchPaper(p.id)}
-            className={`group flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-md
+            className={`group flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-t-md
                         cursor-pointer select-none border border-b-0 mr-1 transition whitespace-nowrap
               ${p.id === activeId
-                ? 'bg-gray-50 border-gray-200 text-indigo-600'
-                : 'bg-gray-100 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                ? 'bg-[#f5f3ef] border-stone-200 text-stone-900'
+                : 'bg-stone-50 border-transparent text-stone-400 hover:text-stone-600 hover:bg-stone-50'
               }`}
           >
             {editingTabId === p.id ? (
               <input
                 autoFocus
-                className="max-w-[120px] bg-white border border-indigo-400 rounded px-1
-                           text-xs text-gray-800 outline-none"
+                className="max-w-[120px] bg-white border border-stone-900 rounded px-1
+                           text-xs text-stone-800 outline-none"
                 value={tabDraft}
                 onChange={e => setTabDraft(e.target.value)}
                 onClick={e => e.stopPropagation()}
@@ -255,21 +301,21 @@ export function PaperBuilder({
               <span
                 className="max-w-[120px] truncate"
                 onDoubleClick={e => startRenameTab(p.id, p.title, e)}
-                title="Double-click to rename"
+                title={isViewer ? undefined : "Double-click to rename"}
               >
                 {p.title}
               </span>
             )}
             {p.items.length > 0 && (
-              <span className={`text-[10px] rounded-full px-1.5 py-0.5
-                ${p.id === activeId ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`}>
+              <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-mono
+                ${p.id === activeId ? 'bg-stone-200 text-stone-700' : 'bg-stone-100 text-stone-400'}`}>
                 {p.items.length}
               </span>
             )}
-            {papers.length > 1 && (
+            {papers.length > 1 && !isViewer && (
               <button
                 onClick={e => { e.stopPropagation(); onCloseTab(p.id) }}
-                className="ml-0.5 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500
+                className="ml-1.5 opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500
                            leading-none transition rounded-full w-4 h-4 flex items-center justify-center"
                 title="Close paper"
               >
@@ -278,75 +324,72 @@ export function PaperBuilder({
             )}
           </div>
         ))}
-        <button
-          onClick={onNewPaper}
-          className="px-2.5 py-2 text-xs text-gray-400 hover:text-indigo-600 transition mb-0 self-end"
-          title="New paper"
-        >
-          + New
-        </button>
+        {!isViewer && (
+          <button
+            onClick={onNewPaper}
+            className="px-3 py-2 text-xs text-stone-400 hover:text-stone-800 transition mb-0 self-end font-semibold"
+            title="New paper"
+          >
+            + New
+          </button>
+        )}
       </div>
 
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-gray-200 shrink-0">
+      <div className="flex items-center justify-between px-6 py-2.5 bg-[#faf9f7] border-b border-stone-200 shrink-0">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <input
             type="text"
             value={paperTitle}
             onChange={e => setPaperTitle(e.target.value)}
-            className="flex-1 max-w-xs text-sm font-medium text-gray-700 bg-transparent border-b border-transparent
-                       hover:border-gray-300 focus:border-indigo-500 focus:outline-none px-1 transition"
+            disabled={isViewer}
+            className="flex-1 max-w-xs text-xs font-semibold text-stone-800 bg-transparent border-b border-transparent
+                       hover:border-stone-300 focus:border-stone-900 focus:outline-none px-1 py-0.5 transition disabled:hover:border-transparent"
           />
-          <span className="text-xs text-gray-400 whitespace-nowrap">
+          <span className="text-[11px] font-mono text-stone-400 whitespace-nowrap">
             {paper.length} questions · {totalMarks} marks
           </span>
         </div>
-        <div className="flex items-center gap-2 ml-3">
-          <button
-            onClick={onAutoGenerate}
-            disabled={!canAutoGenerate}
-            title={canAutoGenerate ? 'Auto-generate paper from bank' : 'Load a question bank first'}
-            className="px-3 py-1.5 text-xs rounded-md border border-indigo-300 text-indigo-600
-                       hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-          >
-            ✦ Auto-Generate
-          </button>
-          {paper.length > 0 && (
+        {!isViewer && (
+          <div className="flex items-center gap-2 ml-3">
             <button
-              onClick={() => {
-                if (window.confirm(`Clear all ${paper.length} questions from this paper?`)) onClearPaper()
-              }}
-              className="px-3 py-1.5 text-xs rounded-md border border-red-200 text-red-500
-                         hover:bg-red-50 transition"
+              onClick={onAutoGenerate}
+              disabled={!canAutoGenerate}
+              title={canAutoGenerate ? 'Auto-generate paper from bank' : 'Load a question bank first'}
+              className="px-3 py-1.5 text-xs rounded-md border border-stone-200 text-stone-800
+                         hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed transition font-medium"
             >
-              Clear
+              ✦ Auto-Generate
             </button>
-          )}
-          <button
-            onClick={() => setShowCustomForm(v => !v)}
-            className="px-3 py-1.5 text-xs rounded-md border border-gray-300 text-gray-600
-                       hover:bg-gray-50 transition"
-          >
-            + Custom
-          </button>
-          <button
-            onClick={onExport}
-            disabled={paper.length === 0}
-            className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white
-                       hover:bg-indigo-700 disabled:opacity-40 transition"
-          >
-            Export
-          </button>
-        </div>
+            {paper.length > 0 && (
+              <button
+                onClick={() => {
+                  if (window.confirm(`Clear all ${paper.length} questions from this paper?`)) onClearPaper()
+                }}
+                className="px-3 py-1.5 text-xs rounded-md border border-red-200 text-red-600
+                           hover:bg-red-50 transition font-medium"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => setShowCustomForm(v => !v)}
+              className="px-3 py-1.5 text-xs rounded-md border border-stone-200 text-stone-600
+                         hover:bg-stone-50 transition font-medium"
+            >
+              + Custom
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Custom question form */}
-      {showCustomForm && (
-        <div className="px-4 py-3 bg-white border-b border-gray-200 shrink-0">
+      {showCustomForm && !isViewer && (
+        <div className="px-6 py-3 bg-[#faf9f7] border-b border-stone-200 shrink-0">
           <textarea
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md resize-none
-                       focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            rows={3}
+            className="w-full px-3 py-2 text-xs bg-white border border-stone-200 text-stone-800 rounded-md resize-none
+                       focus:outline-none focus:ring-1 focus:ring-stone-900"
+            rows={2}
             placeholder="Type your custom question here..."
             value={customText}
             onChange={e => setCustomText(e.target.value)}
@@ -355,39 +398,39 @@ export function PaperBuilder({
           />
           <div className="flex gap-2 mt-2">
             <button onClick={submitCustom} disabled={!customText.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-green-600 text-white
-                         hover:bg-green-700 disabled:opacity-40 transition">
+              className="px-3 py-1.5 text-xs rounded-md bg-stone-900 text-white hover:opacity-95 disabled:opacity-40 transition font-medium">
               Add Question
             </button>
             <button onClick={() => { setShowCustomForm(false); setCustomText('') }}
-              className="px-3 py-1.5 text-xs rounded-md bg-gray-100 text-gray-600
-                         hover:bg-gray-200 transition">
+              className="px-3 py-1.5 text-xs rounded-md bg-stone-100 text-stone-600 hover:opacity-90 transition font-medium">
               Cancel
             </button>
-            <span className="text-xs text-gray-400 self-center ml-1">Ctrl+Enter to add</span>
+            <span className="text-[10px] text-zinc-400 self-center ml-1">Ctrl+Enter to add</span>
           </div>
         </div>
       )}
 
       {/* ── Paper list ──────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex-1 overflow-y-auto px-6 py-4">
         {paper.length === 0 && !hasSections ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-2">
-            <p className="text-4xl">📋</p>
-            <p>This paper is empty.</p>
-            <p className="text-xs">Click + on questions from the bank to add them here.</p>
-            <button
-              onClick={() => setSectionDialog({ mode: 'add', sec: null })}
-              className="mt-3 px-4 py-2 text-xs rounded-lg border-2 border-dashed border-indigo-200
-                         text-indigo-500 hover:border-indigo-400 hover:bg-indigo-50 transition"
-            >
-              + Add a section to organise your paper
-            </button>
+          <div className="flex flex-col items-center justify-center h-full text-zinc-400 text-xs gap-2">
+            <p className="text-3xl">📋</p>
+            <p className="font-medium text-zinc-500">This paper is empty.</p>
+            <p className="text-[11px] text-zinc-400">Add questions from the left question bank panel.</p>
+            {!isViewer && (
+              <button
+                onClick={() => setSectionDialog({ mode: 'add', sec: null })}
+                className="mt-4 px-4 py-2 text-xs rounded-lg border border-dashed border-stone-300
+                           text-stone-600 hover:border-stone-400 transition"
+              >
+                + Add a section to organise your paper
+              </button>
+            )}
           </div>
         ) : hasSections ? (
           /* ── Sectioned view ─────────────────────────────────────────── */
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <div className="space-y-5">
+            <div className="space-y-6">
               {sections.map(sec => {
                 const secItems = getSecItems(sec.id)
                 const isActive = activeSectionId === sec.id
@@ -395,20 +438,19 @@ export function PaperBuilder({
                   <div key={sec.id}>
                     {/* Section header */}
                     <div
-                      onClick={() => onActiveSectionChange(sec.id)}
-                      className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer
-                                  border-2 transition mb-2
+                      onClick={() => !isViewer && onActiveSectionChange(sec.id)}
+                      className={`flex items-center justify-between px-4 py-3 rounded-lg border transition mb-2
                         ${isActive
-                          ? 'border-indigo-400 bg-indigo-50'
-                          : 'border-gray-200 bg-white hover:border-indigo-200'}`}
+                          ? 'border-stone-900 bg-stone-50'
+                          : 'border-stone-200 bg-[#faf9f7] hover:border-stone-300'}`}
                     >
-                      <div className="flex items-center gap-2.5">
-                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 transition
-                          ${isActive ? 'bg-indigo-500' : 'bg-gray-300'}`} />
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full shrink-0 transition
+                          ${isActive ? 'bg-stone-900' : 'bg-stone-200'}`} />
                         <div>
-                          <p className="text-sm font-semibold text-gray-800 leading-tight">{sec.title}</p>
+                          <p className="text-xs font-semibold text-stone-800 leading-tight">{sec.title}</p>
                           {(sec.instruction || sec.marksPerQ > 0) && (
-                            <p className="text-xs text-gray-400 leading-tight mt-0.5">
+                            <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
                               {sec.instruction ? sec.instruction : ''}
                               {sec.marksPerQ ? ` · ${sec.marksPerQ}m each` : ''}
                             </p>
@@ -416,30 +458,34 @@ export function PaperBuilder({
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 ml-2">
-                        <span className="text-xs text-gray-400 mr-1">
+                        <span className="text-[11px] font-mono text-zinc-400 mr-2">
                           {secItems.length}q · {secItems.reduce((s, i) => s + i.marks, 0)}m
                         </span>
-                        <button
-                          onClick={e => { e.stopPropagation(); setSectionDialog({ mode: 'edit', sec }) }}
-                          className="w-6 h-6 flex items-center justify-center rounded text-gray-300
-                                     hover:text-indigo-500 hover:bg-indigo-50 transition text-xs"
-                          title="Edit section"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          onClick={e => {
-                            e.stopPropagation()
-                            if (secItems.length === 0 || window.confirm(
-                              `Delete "${sec.title}"? Its ${secItems.length} question${secItems.length !== 1 ? 's' : ''} will become unsectioned.`
-                            )) onDeleteSection(sec.id)
-                          }}
-                          className="w-6 h-6 flex items-center justify-center rounded text-gray-300
-                                     hover:text-red-500 hover:bg-red-50 transition text-xs"
-                          title="Delete section"
-                        >
-                          ✕
-                        </button>
+                        {!isViewer && (
+                          <>
+                            <button
+                              onClick={e => { e.stopPropagation(); setSectionDialog({ mode: 'edit', sec }) }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-stone-400
+                                         hover:text-stone-900 transition text-[10px]"
+                              title="Edit section"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                if (secItems.length === 0 || window.confirm(
+                                  `Delete "${sec.title}"? Its ${secItems.length} question${secItems.length !== 1 ? 's' : ''} will become unsectioned.`
+                                )) onDeleteSection(sec.id)
+                              }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-zinc-400
+                                         hover:text-red-500 transition text-[10px]"
+                              title="Delete section"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -448,31 +494,29 @@ export function PaperBuilder({
                         items={secItems.map(i => i.uid)}
                         strategy={verticalListSortingStrategy}
                       >
-                        <ul className="space-y-2 pl-1">
+                        <ul className="space-y-2.5 ml-3">
                           {secItems.map((item, idx) => (
                             <PaperCard
                               key={item.uid}
                               item={item}
-                              index={idx}
+                              index={idx + 1}
                               rephrasing={rephrasing}
-                              sections={sections}
-                              onMoveToSection={onMoveToSection}
                               onRemove={onRemove}
                               onRephrase={onRephrase}
                               onUndoRephrase={onUndoRephrase}
                               onMarksChange={onMarksChange}
                               onTextChange={onTextChange}
+                              sections={sections}
+                              onMoveToSection={onMoveToSection}
+                              user={user}
                             />
                           ))}
                         </ul>
                       </SortableContext>
                     ) : (
-                      <p className={`text-xs italic pl-4 py-2
-                        ${isActive ? 'text-indigo-400' : 'text-gray-400'}`}>
-                        {isActive
-                          ? 'Active — add questions from the bank on the left.'
-                          : 'No questions yet. Click this section to make it active.'}
-                      </p>
+                      <div className="ml-3 p-3 border border-dashed border-stone-200 rounded-lg text-[10px] text-stone-400 text-center">
+                        Empty section. Add questions to this section.
+                      </div>
                     )}
                   </div>
                 )
@@ -481,89 +525,102 @@ export function PaperBuilder({
               {/* Unsectioned questions */}
               {unsectioned.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg mb-2">
-                    <span className="text-xs font-semibold text-amber-700">
-                      Unsectioned ({unsectioned.length})
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-stone-200 mb-2">
+                    <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Unsectioned</span>
+                    <span className="text-[11px] font-mono text-zinc-400">
+                      {unsectioned.length}q · {unsectioned.reduce((s, i) => s + i.marks, 0)}m
                     </span>
-                    <span className="text-xs text-amber-500">— assign these to a section using the dropdown on each card</span>
                   </div>
-                  <SortableContext
-                    items={unsectioned.map(i => i.uid)}
-                    strategy={verticalListSortingStrategy}
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext
+                      items={unsectioned.map(i => i.uid)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <ul className="space-y-2.5">
+                        {unsectioned.map((item, idx) => (
+                          <PaperCard
+                            key={item.uid}
+                            item={item}
+                            index={idx + 1}
+                            rephrasing={rephrasing}
+                            onRemove={onRemove}
+                            onRephrase={onRephrase}
+                            onUndoRephrase={onUndoRephrase}
+                            onMarksChange={onMarksChange}
+                            onTextChange={onTextChange}
+                            sections={sections}
+                            onMoveToSection={onMoveToSection}
+                            user={user}
+                          />
+                        ))}
+                      </ul>
+                    </SortableContext>
+                  </DndContext>
+                </div>
+              )}
+
+              {!isViewer && (
+                <div className="pt-2 flex justify-center">
+                  <button
+                    onClick={() => setSectionDialog({ mode: 'add', sec: null })}
+                    className="px-4 py-2 text-xs rounded-lg border border-dashed border-stone-200 text-stone-500 hover:border-stone-300 hover:bg-stone-50 transition font-medium"
                   >
-                    <ul className="space-y-2 pl-1">
-                      {unsectioned.map((item, idx) => (
-                        <PaperCard
-                          key={item.uid}
-                          item={item}
-                          index={idx}
-                          rephrasing={rephrasing}
-                          sections={sections}
-                          onMoveToSection={onMoveToSection}
-                          onRemove={onRemove}
-                          onRephrase={onRephrase}
-                          onUndoRephrase={onUndoRephrase}
-                          onMarksChange={onMarksChange}
-                          onTextChange={onTextChange}
-                        />
-                      ))}
-                    </ul>
-                  </SortableContext>
+                    + Add another section
+                  </button>
                 </div>
               )}
             </div>
           </DndContext>
         ) : (
-          /* ── Flat list (no sections defined) ────────────────────────── */
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
+          /* ── Unsectioned flat list view ──────────────────────────────── */
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext
               items={paper.map(i => i.uid)}
               strategy={verticalListSortingStrategy}
             >
-              <ul className="space-y-2">
+              <ul className="space-y-2.5">
                 {paper.map((item, idx) => (
                   <PaperCard
                     key={item.uid}
                     item={item}
-                    index={idx}
+                    index={idx + 1}
                     rephrasing={rephrasing}
-                    sections={[]}
-                    onMoveToSection={() => {}}
                     onRemove={onRemove}
                     onRephrase={onRephrase}
                     onUndoRephrase={onUndoRephrase}
                     onMarksChange={onMarksChange}
                     onTextChange={onTextChange}
+                    sections={sections}
+                    onMoveToSection={onMoveToSection}
+                    user={user}
                   />
                 ))}
               </ul>
             </SortableContext>
+            {!isViewer && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => setSectionDialog({ mode: 'add', sec: null })}
+                  className="px-4 py-2 text-xs rounded-lg border border-dashed border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition font-medium"
+                >
+                  + Add a section to organize your paper
+                </button>
+              </div>
+            )}
           </DndContext>
         )}
-
-        {/* Add Section button */}
-        <button
-          onClick={() => setSectionDialog({ mode: 'add', sec: null })}
-          className="mt-4 w-full px-3 py-2 text-xs rounded-lg border-2 border-dashed
-                     border-indigo-200 text-indigo-400 hover:border-indigo-400 hover:text-indigo-600
-                     hover:bg-indigo-50 transition"
-        >
-          + Add Section
-        </button>
       </div>
 
-      {/* Section edit dialog */}
+      {/* ── Dialogs ────────────────────────────────────────────────────── */}
       {sectionDialog && (
         <SectionEditDialog
-          initial={sectionDialog.mode === 'edit' && sectionDialog.sec
-            ? { title: sectionDialog.sec.title, instruction: sectionDialog.sec.instruction, marksPerQ: sectionDialog.sec.marksPerQ }
-            : null}
+          initial={sectionDialog.sec ? {
+            title:       sectionDialog.sec.title,
+            instruction: sectionDialog.sec.instruction || '',
+            marksPerQ:   sectionDialog.sec.marksPerQ,
+          } : null}
           sectionsCount={sections.length}
-          onSave={handleSectionSave}
+          onSave={handleSaveSection}
           onClose={() => setSectionDialog(null)}
         />
       )}

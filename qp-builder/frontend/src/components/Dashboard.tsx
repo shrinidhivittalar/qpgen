@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { PaperTab } from '../types'
+import type { User } from '../api'
 
 interface Props {
   subjectMap:      Record<string, Record<string, number>>
@@ -9,6 +10,7 @@ interface Props {
   onUploadBank:              () => void
   onGenerateFromBlueprint:   () => void
   onOpenPaper:               (id: string) => void
+  user:                      User
 }
 
 const SUBJECT_LABELS: Record<string, string> = {
@@ -40,6 +42,7 @@ export function Dashboard({
   onUploadBank,
   onGenerateFromBlueprint,
   onOpenPaper,
+  user,
 }: Props) {
   const totalQuestions = useMemo(() => {
     let n = 0
@@ -51,23 +54,31 @@ export function Dashboard({
 
   const subjectCount  = Object.keys(subjectMap).length
   const activePapers  = papers.filter(p => p.items.length > 0)
+  const isViewer = user.role === 'Viewer'
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50">
-      <div className="max-w-3xl mx-auto px-6 py-10">
+    <div className="flex-1 overflow-y-auto bg-[#f5f3ef]">
+      <div className="max-w-4xl mx-auto px-8 py-12">
 
-        {/* ── Greeting ──────────────────────────────────────────────────── */}
-        <div className="mb-8">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">
-            {greeting()}
-          </p>
-          <h1 className="text-2xl font-bold text-slate-800 leading-snug">
-            What would you like to do today?
-          </h1>
+        {/* ── Greeting & Welcome header ──────────────────────────────────── */}
+        <div className="mb-10 flex justify-between items-start">
+          <div>
+            <p className="text-[11px] font-medium text-stone-400 uppercase tracking-wider mb-1">
+              {greeting()}, {user.username}
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight text-stone-900">
+              Workspace Overview
+            </h1>
+          </div>
+          {isViewer && (
+            <div className="px-3 py-1.5 bg-stone-100 text-[11px] text-stone-500 rounded-lg max-w-[280px]">
+              🔒 You have <strong>Viewer</strong> access. Editing features are disabled.
+            </div>
+          )}
         </div>
 
-        {/* ── Stats row ─────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-3 mb-10">
+        {/* ── Metric Grid ─────────────────────────────────────────────── */}
+        <div className="grid grid-cols-3 gap-4 mb-12">
           {[
             { value: totalQuestions, label: 'Questions in bank',  sub: 'across all subjects' },
             { value: subjectCount,   label: 'Subjects available', sub: 'ready to use'         },
@@ -75,141 +86,114 @@ export function Dashboard({
           ].map(s => (
             <div
               key={s.label}
-              className="bg-white rounded-xl border border-slate-100 px-5 py-4 shadow-sm"
+              className="bg-[#faf9f7] rounded-xl border border-stone-200 p-5 shadow-sm hover:border-stone-300 transition-colors"
             >
-              <div className="font-mono text-3xl font-bold text-slate-800 tabular-nums leading-none mb-1.5">
+              <div className="font-mono text-2xl font-medium text-stone-900 tabular-nums mb-1">
                 {s.value.toLocaleString()}
               </div>
-              <div className="text-sm font-medium text-slate-700">{s.label}</div>
-              <div className="text-xs text-slate-400 mt-0.5">{s.sub}</div>
+              <div className="text-xs font-semibold text-stone-700">{s.label}</div>
+              <div className="text-[10px] text-stone-400 mt-0.5">{s.sub}</div>
             </div>
           ))}
         </div>
 
-        {/* ── Action cards ──────────────────────────────────────────────── */}
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
-          Start from
-        </p>
-        <div className="grid grid-cols-3 gap-3 mb-10">
-
-          {/* Browse & Build */}
-          <button
-            onClick={onBrowseAndBuild}
-            className="group text-left bg-white rounded-xl border border-slate-100 shadow-sm
-                       hover:shadow-md hover:border-indigo-200 transition-all duration-150
-                       overflow-hidden focus-visible:outline-none focus-visible:ring-2
-                       focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
-          >
-            <div className="h-[3px] bg-indigo-600" />
-            <div className="p-5">
-              <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center mb-4 text-lg"
-                   aria-hidden="true">
+        {/* ── Action Cards ─────────────────────────────────────────────── */}
+        <div className="mb-12">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-4">
+            Actions
+          </p>
+          <div className="grid grid-cols-3 gap-4">
+            {/* Browse & Build */}
+            <button
+              onClick={onBrowseAndBuild}
+              className="group text-left bg-[#faf9f7] rounded-xl border border-stone-200 p-5 shadow-sm
+                         hover:border-stone-400 transition-all focus:outline-none"
+            >
+              <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center mb-4 text-sm" aria-hidden="true">
                 🔍
               </div>
-              <div className="text-sm font-semibold text-slate-800 mb-1.5">Browse & Build</div>
-              <div className="text-xs text-slate-500 leading-relaxed">
-                Search the question bank and hand-pick questions for your paper.
+              <div className="text-xs font-semibold text-stone-900 mb-1">
+                Browse & Build
               </div>
-            </div>
-            <div className="px-5 pb-5">
-              <span className="text-xs font-semibold text-indigo-600 group-hover:underline">
-                Open question bank →
-              </span>
-            </div>
-          </button>
+              <div className="text-[11px] text-stone-500 leading-relaxed">
+                Search question banks, review duplicates, and hand-pick questions.
+              </div>
+            </button>
 
-          {/* Upload Bank — disabled while parsing is being refactored */}
-          <button
-            disabled
-            title="Upload parsing is being refactored — coming soon"
-            className="group text-left bg-white rounded-xl border border-slate-100 shadow-sm
-                       overflow-hidden opacity-50 cursor-not-allowed"
-          >
-            <div className="h-[3px] bg-amber-300" />
-            <div className="p-5">
-              <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center mb-4 text-lg"
-                   aria-hidden="true">
-                📥
-              </div>
-              <div className="text-sm font-semibold text-slate-800 mb-1.5">Upload Question Bank</div>
-              <div className="text-xs text-slate-500 leading-relaxed">
-                Add a past paper or question bank PDF to grow your library.
-              </div>
-            </div>
-            <div className="px-5 pb-5">
-              <span className="text-xs font-semibold text-amber-400">
-                Coming soon →
-              </span>
-            </div>
-          </button>
-
-          {/* Blueprint — coming soon */}
-          <button
-            onClick={onGenerateFromBlueprint}
-            disabled
-            className="group text-left bg-white rounded-xl border border-slate-100 shadow-sm
-                       opacity-60 cursor-not-allowed overflow-hidden
-                       focus-visible:outline-none"
-            aria-disabled="true"
-          >
-            <div className="h-[3px] bg-emerald-500" />
-            <div className="p-5">
+            {/* Upload Bank — coming soon */}
+            <button
+              disabled
+              title="Upload parsing is being refactored — coming soon"
+              className="group text-left bg-stone-50/80 rounded-xl border border-stone-200/60 p-5 opacity-50 cursor-not-allowed"
+            >
               <div className="flex items-start justify-between mb-4">
-                <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center text-lg"
-                     aria-hidden="true">
-                  📋
+                <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center text-sm" aria-hidden="true">
+                  📥
                 </div>
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100
-                                 text-emerald-700 px-2 py-0.5 rounded-full">
+                <span className="text-[9px] font-medium tracking-wider bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded">
                   Soon
                 </span>
               </div>
-              <div className="text-sm font-semibold text-slate-800 mb-1.5">
+              <div className="text-xs font-semibold text-stone-700 mb-1">
+                Upload Question Bank
+              </div>
+              <div className="text-[11px] text-stone-400 leading-relaxed">
+                Add a past paper or question bank PDF. Extracted by Gemini automatically.
+              </div>
+            </button>
+
+            {/* Blueprint */}
+            <button
+              disabled
+              className="group text-left bg-stone-50/80 rounded-xl border border-stone-200/60 p-5 opacity-50 cursor-not-allowed"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center text-sm" aria-hidden="true">
+                  📋
+                </div>
+                <span className="text-[9px] font-medium tracking-wider bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded">
+                  Soon
+                </span>
+              </div>
+              <div className="text-xs font-semibold text-stone-700 mb-1">
                 Generate from Blueprint
               </div>
-              <div className="text-xs text-slate-500 leading-relaxed">
-                Upload a board blueprint PDF and auto-generate a chapter-wise paper.
+              <div className="text-[11px] text-stone-400 leading-relaxed">
+                Upload board blueprints to auto-assemble balanced papers.
               </div>
-            </div>
-            <div className="px-5 pb-5">
-              <span className="text-xs font-semibold text-emerald-600">
-                Coming soon
-              </span>
-            </div>
-          </button>
-
+            </button>
+          </div>
         </div>
 
-        {/* ── Question bank breakdown ────────────────────────────────────── */}
+        {/* ── Library Breakdown ────────────────────────────────────────── */}
         {(Object.keys(subjectMap).length > 0 || Object.keys(uploadedSources).length > 0) && (
-          <>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
-              Question bank
+          <div className="mb-12">
+            <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-4">
+              Library
             </p>
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden mb-8">
+            <div className="bg-[#faf9f7] rounded-xl border border-stone-200 overflow-hidden shadow-sm">
               {Object.entries(subjectMap).map(([subj, srcs], idx, arr) => {
-                const total   = Object.values(srcs).reduce((a, b) => a + b, 0)
+                const total = Object.values(srcs).reduce((a, b) => a + b, 0)
                 const srcList = Object.entries(srcs)
                   .map(([src, n]) => `${SOURCE_LABELS[src] ?? src.toUpperCase()} (${n})`)
                   .join(' · ')
                 return (
                   <div
                     key={subj}
-                    className={`flex items-center justify-between px-5 py-3.5 ${
+                    className={`flex items-center justify-between px-5 py-4 ${
                       idx < arr.length - 1 || Object.keys(uploadedSources).length > 0
-                        ? 'border-b border-slate-50'
+                        ? 'border-b border-stone-100'
                         : ''
                     }`}
                   >
                     <div className="min-w-0">
-                      <span className="text-sm font-medium text-slate-700 capitalize">
+                      <span className="text-xs font-medium text-stone-800 capitalize">
                         {SUBJECT_LABELS[subj] ?? subj}
                       </span>
-                      <span className="ml-2 text-xs text-slate-400 truncate">{srcList}</span>
+                      <span className="ml-3 text-[11px] text-stone-400 font-mono">{srcList}</span>
                     </div>
-                    <span className="font-mono text-sm font-semibold text-slate-600 tabular-nums ml-4 shrink-0">
-                      {total.toLocaleString()}
-                      <span className="font-normal text-slate-400 text-xs"> q</span>
+                    <span className="font-mono text-xs font-semibold text-stone-600 tabular-nums">
+                      {total.toLocaleString()} <span className="font-normal text-[10px] text-stone-400">questions</span>
                     </span>
                   </div>
                 )
@@ -218,65 +202,50 @@ export function Dashboard({
               {Object.entries(uploadedSources).map(([id, info], idx, arr) => (
                 <div
                   key={id}
-                  className={`flex items-center justify-between px-5 py-3.5 ${
-                    idx < arr.length - 1 ? 'border-b border-slate-50' : ''
+                  className={`flex items-center justify-between px-5 py-4 ${
+                    idx < arr.length - 1 ? 'border-b border-stone-100' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-medium text-slate-700 truncate">{info.name}</span>
-                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider
-                                     bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">
-                      Uploaded
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-xs font-medium text-stone-800 truncate">{info.name}</span>
+                    <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded">
+                      User Uploaded
                     </span>
                   </div>
-                  <span className="font-mono text-sm font-semibold text-slate-600 tabular-nums ml-4 shrink-0">
-                    {info.count.toLocaleString()}
-                    <span className="font-normal text-slate-400 text-xs"> q</span>
+                  <span className="font-mono text-xs font-semibold text-stone-600 tabular-nums">
+                    {info.count.toLocaleString()} <span className="font-normal text-[10px] text-stone-400">questions</span>
                   </span>
                 </div>
               ))}
             </div>
-          </>
+          </div>
         )}
 
-        {/* ── Papers in session ─────────────────────────────────────────── */}
+        {/* ── Active Papers ──────────────────────────────────────────────── */}
         {activePapers.length > 0 && (
-          <>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
-              Papers in this session
+          <div>
+            <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-4">
+              Recent Papers in Session
             </p>
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+            <div className="bg-[#faf9f7] rounded-xl border border-stone-200 overflow-hidden shadow-sm">
               {activePapers.map((p, idx, arr) => {
                 const marks = p.items.reduce((s, i) => s + i.marks, 0)
                 return (
                   <button
                     key={p.id}
                     onClick={() => onOpenPaper(p.id)}
-                    className={`w-full flex items-center justify-between px-5 py-3.5 text-left
-                                hover:bg-slate-50 transition-colors
-                                focus-visible:outline-none focus-visible:ring-2
-                                focus-visible:ring-indigo-500 focus-visible:ring-inset
-                                ${idx < arr.length - 1 ? 'border-b border-slate-50' : ''}`}
+                    className={`w-full flex items-center justify-between px-5 py-4 text-left hover:bg-stone-50 transition-colors focus:outline-none ${
+                      idx < arr.length - 1 ? 'border-b border-stone-100' : ''
+                    }`}
                   >
-                    <span className="text-sm font-medium text-slate-700">{p.title}</span>
-                    <span className="text-xs text-slate-400 ml-4 shrink-0">
+                    <span className="text-xs font-medium text-stone-800">{p.title}</span>
+                    <span className="text-[11px] text-stone-400 font-mono">
                       {p.items.length} questions · {marks} marks
                     </span>
                   </button>
                 )
               })}
             </div>
-          </>
-        )}
-
-        {/* ── Empty state — no bank yet ──────────────────────────────────── */}
-        {totalQuestions === 0 && (
-          <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-xl px-6 py-5">
-            <p className="text-sm font-semibold text-indigo-800 mb-1">Your question bank is empty</p>
-            <p className="text-xs text-indigo-600 leading-relaxed">
-              Upload a past paper PDF using <strong>Upload Question Bank</strong> to get started.
-              Questions will be parsed automatically and added to your library.
-            </p>
           </div>
         )}
 

@@ -7,6 +7,8 @@ from pymongo import MongoClient
 from datetime import datetime, timezone
 import fitz  # PyMuPDF
 import json, os, re, uuid, tempfile
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 load_dotenv()
 
@@ -21,6 +23,32 @@ _mongo      = MongoClient(os.getenv("MONGODB_URI"))
 _db         = _mongo["qp_builder"]
 qs_col      = _db["questions"]   # static question banks
 uploads_col = _db["uploads"]     # user-uploaded papers
+users_col   = _db["users"]       # user accounts
+sessions_col = _db["sessions"]   # user active sessions
+
+def get_current_user_role():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ")[1]
+    session = sessions_col.find_one({"token": token})
+    if not session:
+        return None
+    return session.get("role", "Viewer")
+
+def require_roles(*roles):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            # If no users exist, bypass authorization to allow bootstrap of first user
+            if users_col.count_documents({}) == 0:
+                return f(*args, **kwargs)
+            user_role = get_current_user_role()
+            if not user_role or user_role not in roles:
+                return jsonify({"error": "Forbidden: insufficient permissions"}), 403
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
@@ -109,6 +137,88 @@ Text:
 }
 
 
+# ── Authentication & Auth Endpoints ───────────────────────────────────────────
+
+@app.post("/api/auth/signup")
+def auth_signup():
+    data = request.get_json(force=True)
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    role = (data.get("role") or "Teacher").strip()
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters long"}), 400
+    if not any(c.isdigit() for c in password) or not any(c.isalpha() for c in password):
+        return jsonify({"error": "Password must contain both letters and numbers"}), 400
+    if role not in ["Admin", "Teacher", "Viewer"]:
+        return jsonify({"error": "Invalid role"}), 400
+        
+    if users_col.find_one({"username": username}):
+        return jsonify({"error": "Username already exists"}), 400
+        
+    hashed_password = generate_password_hash(password)
+    users_col.insert_one({
+        "username": username,
+        "password": hashed_password,
+        "role": role,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    token = str(uuid.uuid4())
+    sessions_col.insert_one({
+        "token": token,
+        "username": username,
+        "role": role,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return jsonify({"token": token, "user": {"username": username, "role": role}})
+
+@app.post("/api/auth/login")
+def auth_login():
+    data = request.get_json(force=True)
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+        
+    user = users_col.find_one({"username": username})
+    if not user or not check_password_hash(user["password"], password):
+        return jsonify({"error": "Invalid username or password"}), 401
+        
+    token = str(uuid.uuid4())
+    sessions_col.insert_one({
+        "token": token,
+        "username": username,
+        "role": user.get("role", "Viewer"),
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return jsonify({"token": token, "user": {"username": username, "role": user.get("role", "Viewer")}})
+
+@app.get("/api/auth/me")
+def auth_me():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Unauthorized"}), 401
+    token = auth_header.split(" ")[1]
+    session = sessions_col.find_one({"token": token})
+    if not session:
+        return jsonify({"error": "Session expired or invalid"}), 401
+    return jsonify({"username": session["username"], "role": session.get("role", "Viewer")})
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        sessions_col.delete_one({"token": token})
+    return jsonify({"ok": True})
+
+
 # ── Subjects ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/subjects")
@@ -142,6 +252,7 @@ def list_uploads():
 # ── Rename an uploaded paper ──────────────────────────────────────────────────
 
 @app.patch("/api/uploads/<upload_id>")
+@require_roles("Admin", "Teacher")
 def rename_upload(upload_id):
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
@@ -650,6 +761,7 @@ def upload_question_images(upload_id: str, image_map: dict[int, list[dict]]) -> 
 
 
 @app.post("/api/upload")
+@require_roles("Admin", "Teacher")
 def upload_qp():
     """Parse PDF and return raw questions for user review — does NOT save to DB."""
     if "file" not in request.files:
@@ -791,6 +903,7 @@ def upload_qp():
 
 
 @app.post("/api/upload/confirm")
+@require_roles("Admin", "Teacher")
 def confirm_upload():
     """Save user-reviewed questions to MongoDB after the review step."""
     data      = request.get_json(force=True)
@@ -882,6 +995,7 @@ def confirm_upload():
 # ── Delete an uploaded paper ─────────────────────────────────────────────────
 
 @app.delete("/api/uploads/<upload_id>")
+@require_roles("Admin", "Teacher")
 def delete_upload(upload_id):
     result = uploads_col.delete_one({"upload_id": upload_id})
     if result.deleted_count == 0:
@@ -892,6 +1006,7 @@ def delete_upload(upload_id):
 # ── Delete a static question source (subject + source) ───────────────────────
 
 @app.delete("/api/questions/<subject>/<source>")
+@require_roles("Admin")
 def delete_question_source(subject, source):
     result = qs_col.delete_many({"subject": subject, "source": source})
     return jsonify({"ok": True, "deleted": result.deleted_count})
@@ -900,6 +1015,7 @@ def delete_question_source(subject, source):
 # ── Edit a single question inside an uploaded paper ───────────────────────────
 
 @app.patch("/api/uploads/<upload_id>/questions/<qid>")
+@require_roles("Admin", "Teacher")
 def update_upload_question(upload_id, qid):
     data    = request.get_json(force=True)
     updates = {}
@@ -933,6 +1049,7 @@ def update_upload_question(upload_id, qid):
 # ── Delete a single question inside an uploaded paper ────────────────────────
 
 @app.delete("/api/uploads/<upload_id>/questions/<qid>")
+@require_roles("Admin", "Teacher")
 def delete_upload_question(upload_id, qid):
     result = uploads_col.update_one(
         {"upload_id": upload_id},
