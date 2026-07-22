@@ -1,15 +1,10 @@
 {
   "name": "qpgenerator",
   "private": true,
-  "workspaces": ["client", "server"],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
-    "build": "npm run build -w server && npm run build -w client"
+    "dev": "cd qp-builder/frontend && npm run dev"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
-  },
-  "overrides": {
-    "vite": "^6.0.5"
   }
 }
