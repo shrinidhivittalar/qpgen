@@ -1,12 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import type { DragEvent } from 'react'
 
-const PAPER_TYPES = [
-  { value: 'sslc_qp',  label: 'QP'        },
-  { value: 'textbook', label: 'Textbook'  },
-  { value: 'generic',  label: 'Other'     },
-]
-
 interface Props {
   uploading:   boolean
   uploadError: string | null
@@ -15,7 +9,6 @@ interface Props {
 }
 
 export function DashboardUploadModal({ uploading, uploadError, onUpload, onCancel }: Props) {
-  const [paperType,   setPaperType]   = useState('sslc_qp')
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [dragOver,    setDragOver]    = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -34,8 +27,8 @@ export function DashboardUploadModal({ uploading, uploadError, onUpload, onCance
 
   const handleSubmit = useCallback(() => {
     if (!pendingFile) return
-    onUpload(pendingFile, paperType)
-  }, [pendingFile, paperType, onUpload])
+    onUpload(pendingFile, 'sslc_qp')
+  }, [pendingFile, onUpload])
 
   return (
     <div
@@ -66,31 +59,6 @@ export function DashboardUploadModal({ uploading, uploadError, onUpload, onCance
         </div>
 
         <div className="px-6 py-5 space-y-4">
-
-          {/* Paper type segmented control */}
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Paper type
-            </p>
-            <div className="flex gap-2">
-              {PAPER_TYPES.map(pt => (
-                <button
-                  key={pt.value}
-                  onClick={() => setPaperType(pt.value)}
-                  disabled={uploading}
-                  className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition
-                             disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2
-                             focus-visible:ring-indigo-400 focus-visible:ring-offset-1
-                             ${paperType === pt.value
-                               ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                               : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
-                             }`}
-                >
-                  {pt.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Drop zone */}
           {!uploading && (

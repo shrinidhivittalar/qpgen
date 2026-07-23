@@ -48,6 +48,7 @@ interface Props {
   onAutoGenerate:       () => void
   canAutoGenerate:      boolean
   onClearPaper:         () => void
+  onUploadBank:         () => void
   user:                 User
 }
 
@@ -181,6 +182,7 @@ export function PaperBuilder({
   onAutoGenerate,
   canAutoGenerate,
   onClearPaper,
+  onUploadBank,
   user,
 }: Props) {
   const isViewer = user.role === 'Viewer'
@@ -352,6 +354,13 @@ export function PaperBuilder({
         </div>
         {!isViewer && (
           <div className="flex items-center gap-2 ml-3">
+            <button
+              onClick={onUploadBank}
+              className="px-3 py-1.5 text-xs rounded-md border border-stone-200 text-stone-600
+                         hover:bg-stone-50 transition font-medium"
+            >
+              Upload PDF
+            </button>
             <button
               onClick={onAutoGenerate}
               disabled={!canAutoGenerate}

@@ -10,8 +10,9 @@ async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
 }
 
 export interface User {
-  username: string
-  role: 'Admin' | 'Teacher' | 'Viewer'
+  username:    string
+  role:        'Admin' | 'Teacher' | 'Viewer'
+  class_grade: '9' | '10' | null
 }
 
 export async function login(username: string, password: string): Promise<{ token: string; user: User }> {
@@ -25,11 +26,16 @@ export async function login(username: string, password: string): Promise<{ token
   return data
 }
 
-export async function signup(username: string, password: string, role: string): Promise<{ token: string; user: User }> {
+export async function signup(
+  username: string,
+  password: string,
+  role: string,
+  class_grade: string | null,
+): Promise<{ token: string; user: User }> {
   const res = await fetch('/api/auth/signup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, role })
+    body: JSON.stringify({ username, password, role, class_grade }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Signup failed')
@@ -45,6 +51,17 @@ export async function getMe(): Promise<User> {
 
 export async function logout(): Promise<void> {
   await authedFetch('/api/auth/logout', { method: 'POST' })
+}
+
+export async function updateMyClass(class_grade: '9' | '10' | null): Promise<User> {
+  const res  = await authedFetch('/api/auth/me', {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ class_grade }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Update failed')
+  return data as User
 }
 
 export async function fetchSubjects(): Promise<Record<string, Record<string, number>>> {
@@ -237,7 +254,12 @@ export async function generateQuestions(params: GenerateQuestionsParams): Promis
 }
 
 export function imageUrl(subject: string, source: string, filename: string): string {
+  // Uploaded-paper images always go through the server proxy so the Supabase
+  // service key is used — avoids 403s when the bucket is not fully public.
+  if (subject === 'uploaded') {
+    return `/api/images/uploaded/${source}/${filename}`
+  }
   const base = import.meta.env.VITE_SUPABASE_IMAGES_URL
   if (base) return `${base}/${subject}/${source}/${filename}`
-  return `/api/images/${subject}/${source}/${filename}`  // local fallback
+  return `/api/images/${subject}/${source}/${filename}`
 }

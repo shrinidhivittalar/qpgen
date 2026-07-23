@@ -33,8 +33,8 @@ function chaptersMatch(bankChapter: string | null, bpChapter: string): boolean {
   return !!key && a.includes(key)
 }
 
-function makePaperItem(q: BankQuestion, subject: string, marks: number, sectionId: string | null = null, isAiGenerated = false): PaperItem {
-  return { ...q, uid: mkUid(), subject, marks, sectionId, isRephrased: false, originalText: q.text, isAiGenerated }
+function makePaperItem(q: BankQuestion, subject: string, source: string, marks: number, sectionId: string | null = null, isAiGenerated = false): PaperItem {
+  return { ...q, uid: mkUid(), subject, source, marks, sectionId, isRephrased: false, originalText: q.text, isAiGenerated }
 }
 
 const QUESTION_VERB_RE =
@@ -132,6 +132,8 @@ export function AutoGenerateModal({
   const [aiGenerating, setAiGenerating] = useState(false)
   const [modelPaper,   setModelPaper]   = useState<ParsedModelPaper | null>(null)
   const [mpSections,   setMpSections]   = useState<ModelPaperSection[]>([])
+  const [mpFile,       setMpFile]       = useState<File | null>(null)   // kept for "use as blueprint" prompt
+  const [mpBpDismissed, setMpBpDismissed] = useState(false)             // user clicked "Not now"
   const mpFileRef = useRef<HTMLInputElement>(null)
 
   // ── manual mode state ──────────────────────────────────────────────────────
@@ -173,16 +175,34 @@ export function AutoGenerateModal({
     if (!file) return
     setMpParsing(true)
     setMpParseErr(null)
+    setMpBpDismissed(false)
     try {
       const result = await parseModelPaper(file)
       setModelPaper(result)
       setMpSections(result.sections)
+      setMpFile(file)
       setMpPhase('preview')
     } catch (err: unknown) {
       setMpParseErr(err instanceof Error ? err.message : 'Failed to parse model paper')
     } finally {
       setMpParsing(false)
       if (mpFileRef.current) mpFileRef.current.value = ''
+    }
+  }
+
+  async function handleUseAsBp() {
+    if (!mpFile) return
+    setBpParsing(true)
+    setBpParseErr(null)
+    try {
+      const result = await parseBlueprint(mpFile)
+      setBlueprint(result)
+      setChapterMap({})
+      setBpPhase('preview')
+    } catch (err: unknown) {
+      setBpParseErr(err instanceof Error ? err.message : 'Failed to parse blueprint')
+    } finally {
+      setBpParsing(false)
     }
   }
 
@@ -205,6 +225,7 @@ export function AutoGenerateModal({
     await deleteModelPaper(subject)
     setModelPaper(null)
     setMpSections([])
+    setMpFile(null)
     setMpPhase('upload')
   }
 
@@ -275,7 +296,7 @@ export function AutoGenerateModal({
           const picked = pool.slice(0, sec.question_count)
           for (const q of picked) {
             usedInSections.add(q.qid)
-            items.push(makePaperItem(q, subject, sec.marks_per_question, secId))
+            items.push(makePaperItem(q, subject, source, sec.marks_per_question, secId))
           }
 
           // Fill any shortfall with AI-generated questions
@@ -294,7 +315,7 @@ export function AutoGenerateModal({
                 example_questions:  exampleQs,
               })
               for (const q of aiItems) {
-                items.push(makePaperItem(q, subject, sec.marks_per_question, secId, true))
+                items.push(makePaperItem(q, subject, source, sec.marks_per_question, secId, true))
               }
             } catch {
               // AI generation failed — section will have fewer questions
@@ -398,7 +419,7 @@ export function AutoGenerateModal({
         const picked = pool.slice(0, sec.question_count)
         for (const q of picked) {
           usedInSections.add(q.qid)
-          items.push(makePaperItem(q, subject, sec.marks_per_question, secId))
+          items.push(makePaperItem(q, subject, source, sec.marks_per_question, secId))
         }
       }
 
@@ -407,7 +428,7 @@ export function AutoGenerateModal({
       // Flat list (no sections) — existing behavior
       const items: PaperItem[] = []
       for (const [mStr, qs] of Object.entries(poolsByMarks)) {
-        for (const q of qs) items.push(makePaperItem(q, subject, parseInt(mStr)))
+        for (const q of qs) items.push(makePaperItem(q, subject, source, parseInt(mStr)))
       }
       onGenerate(items)
     }
@@ -465,7 +486,7 @@ export function AutoGenerateModal({
           for (const q of picked) {
             usedHere.add(q.qid)
             globalUsed.add(q.qid)
-            items.push(makePaperItem(q, subject, sec.marks_per_question, secId))
+            items.push(makePaperItem(q, subject, source, sec.marks_per_question, secId))
           }
 
           const shortfall = sec.question_count - picked.length
@@ -483,7 +504,7 @@ export function AutoGenerateModal({
                 example_questions:  exampleQs,
               })
               for (const q of aiItems) {
-                items.push(makePaperItem(q, subject, sec.marks_per_question, secId, true))
+                items.push(makePaperItem(q, subject, source, sec.marks_per_question, secId, true))
               }
             } catch { /* silently skip */ }
           }
@@ -510,7 +531,7 @@ export function AutoGenerateModal({
     const items: PaperItem[] = []
     for (const row of manualRows) {
       const picked = (pools[row.type] ?? []).splice(0, row.count)
-      for (const q of picked) items.push(makePaperItem(q, subject, row.marks))
+      for (const q of picked) items.push(makePaperItem(q, subject, source, row.marks))
     }
     onGenerate(items)
   }
@@ -738,9 +759,41 @@ export function AutoGenerateModal({
                     </div>
                   )}
 
-                  {!blueprint && (
-                    <p className="text-xs text-amber-600 pt-1">
-                      Tip: also upload a Blueprint PDF to pick questions by chapter weightage.
+                  {/* Blueprint callout */}
+                  {blueprint ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <span className="text-emerald-600 text-sm">✓</span>
+                      <p className="text-xs text-emerald-700 font-medium">
+                        Blueprint loaded — {blueprint.total_questions} questions across {blueprint.rows.length} chapters
+                      </p>
+                    </div>
+                  ) : mpFile && !mpBpDismissed ? (
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg
+                                    bg-amber-50 border border-amber-200">
+                      <p className="text-xs text-amber-800">
+                        Also use this MQP to set chapter-wise marks distribution?
+                      </p>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={handleUseAsBp}
+                          disabled={bpParsing}
+                          className="px-3 py-1 text-xs rounded-md bg-amber-600 text-white font-medium
+                                     hover:bg-amber-700 disabled:opacity-40 transition"
+                        >
+                          {bpParsing ? 'Parsing…' : 'Yes, use as blueprint'}
+                        </button>
+                        <button
+                          onClick={() => setMpBpDismissed(true)}
+                          className="px-3 py-1 text-xs rounded-md border border-amber-300 text-amber-700
+                                     hover:bg-amber-100 transition"
+                        >
+                          Not now
+                        </button>
+                      </div>
+                    </div>
+                  ) : !blueprint && (
+                    <p className="text-xs text-amber-600">
+                      Tip: upload a Blueprint PDF (Blueprint tab) to pick questions by chapter weightage.
                     </p>
                   )}
                 </div>

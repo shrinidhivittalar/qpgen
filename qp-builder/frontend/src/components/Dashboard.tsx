@@ -120,25 +120,22 @@ export function Dashboard({
               </div>
             </button>
 
-            {/* Upload Bank — coming soon */}
+            {/* Upload Bank */}
             <button
-              disabled
-              title="Upload parsing is being refactored — coming soon"
-              className="group text-left bg-stone-50/80 rounded-xl border border-stone-200/60 p-5 opacity-50 cursor-not-allowed"
+              onClick={!isViewer ? onUploadBank : undefined}
+              disabled={isViewer}
+              className="group text-left bg-[#faf9f7] rounded-xl border border-stone-200 p-5 shadow-sm
+                         hover:border-stone-400 transition-all focus:outline-none
+                         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200"
             >
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center text-sm" aria-hidden="true">
-                  📥
-                </div>
-                <span className="text-[9px] font-medium tracking-wider bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded">
-                  Soon
-                </span>
+              <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center mb-4 text-sm" aria-hidden="true">
+                📥
               </div>
-              <div className="text-xs font-semibold text-stone-700 mb-1">
+              <div className="text-xs font-semibold text-stone-900 mb-1">
                 Upload Question Bank
               </div>
-              <div className="text-[11px] text-stone-400 leading-relaxed">
-                Add a past paper or question bank PDF. Extracted by Gemini automatically.
+              <div className="text-[11px] text-stone-500 leading-relaxed">
+                Add a past paper or question bank PDF. Parsed automatically.
               </div>
             </button>
 

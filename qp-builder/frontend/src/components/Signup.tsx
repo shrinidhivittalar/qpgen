@@ -1,22 +1,24 @@
 import React, { useState } from 'react'
 import { signup } from '../api'
+import type { User } from '../api'
 
 interface Props {
-  onSignupSuccess: (token: string, user: { username: string; role: 'Admin' | 'Teacher' | 'Viewer' }) => void
+  onSignupSuccess: (token: string, user: User) => void
   onGoToLogin: () => void
 }
 
 export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [role, setRole] = useState<'Admin' | 'Teacher' | 'Viewer'>('Teacher')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [username,   setUsername]   = useState('')
+  const [password,   setPassword]   = useState('')
+  const [role,       setRole]       = useState<'Admin' | 'Teacher' | 'Viewer'>('Teacher')
+  const [classGrade, setClassGrade] = useState<'9' | '10'>('10')
+  const [error,      setError]      = useState<string | null>(null)
+  const [loading,    setLoading]    = useState(false)
 
-  // Real-time password validation states
   const isMinLength = password.length >= 8
-  const hasLetter = /[a-zA-Z]/.test(password)
-  const hasNumber = /[0-9]/.test(password)
+  const hasLetter   = /[a-zA-Z]/.test(password)
+  const hasNumber   = /[0-9]/.test(password)
+  const needsClass  = role !== 'Admin'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,7 +31,7 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
 
     setLoading(true)
     try {
-      const data = await signup(username, password, role)
+      const data = await signup(username, password, role, needsClass ? classGrade : null)
       onSignupSuccess(data.token, data.user)
     } catch (err: any) {
       setError(err.message || 'Signup failed')
@@ -41,7 +43,6 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#f5f3ef] font-sans antialiased text-stone-900 px-4">
       <div className="w-full max-w-[360px]">
-        {/* Brand/Logo */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-10 h-10 rounded-lg bg-stone-900 flex items-center justify-center text-[#f5f3ef] font-semibold text-lg shadow-sm mb-4">
             QP
@@ -66,7 +67,7 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
               type="text"
               required
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={e => setUsername(e.target.value)}
               placeholder="choose a username"
               className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-900 focus:border-stone-900 transition-all"
             />
@@ -79,7 +80,7 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
             <select
               id="role"
               value={role}
-              onChange={(e) => setRole(e.target.value as any)}
+              onChange={e => setRole(e.target.value as any)}
               className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-stone-900 focus:border-stone-900 transition-all"
             >
               <option value="Teacher">Teacher (Build, configure, generate papers)</option>
@@ -87,6 +88,29 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
               <option value="Viewer">Viewer (Read-only browsing)</option>
             </select>
           </div>
+
+          {needsClass && (
+            <div>
+              <label className="block text-xs font-medium text-stone-500 uppercase tracking-wider mb-1.5" htmlFor="classGrade">
+                Class
+              </label>
+              <div className="flex gap-2">
+                {(['9', '10'] as const).map(g => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => setClassGrade(g)}
+                    className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all focus:outline-none
+                      ${classGrade === g
+                        ? 'bg-stone-900 text-white border-stone-900'
+                        : 'bg-white text-stone-600 border-stone-200 hover:border-stone-400'}`}
+                  >
+                    {g}th Standard
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-stone-500 uppercase tracking-wider mb-1.5" htmlFor="password">
@@ -97,11 +121,10 @@ export function Signup({ onSignupSuccess, onGoToLogin }: Props) {
               type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
               placeholder="create a password"
               className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-900 focus:border-stone-900 transition-all"
             />
-            {/* Real-time Validation UI */}
             <div className="mt-2 space-y-1">
               <div className="flex items-center gap-1.5 text-[11px]">
                 <span className={isMinLength ? 'text-green-600' : 'text-stone-400'}>

@@ -7,3 +7,4 @@ PyMuPDF
 werkzeug
 supabase
 gunicorn
+llama-cloud

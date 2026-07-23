@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion, getMe, logout, User } from './api'
+import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion, getMe, logout, updateMyClass, User } from './api'
 import { QuestionBank } from './components/QuestionBank'
 import { PaperBuilder } from './components/PaperBuilder'
 import { UploadReviewModal } from './components/UploadReviewModal'
@@ -37,6 +37,14 @@ export default function App() {
   const location = useLocation()
   const view = location.pathname === '/builder' ? 'builder' : 'dashboard'
   const goTo  = useCallback((path: '/' | '/builder') => navigate(path), [navigate])
+
+  const [showClassPicker, setShowClassPicker] = useState(false)
+  const handleUpdateClass = useCallback(async (grade: '9' | '10') => {
+    if (!user) return
+    const updated = await updateMyClass(grade)
+    setUser(updated)
+    setShowClassPicker(false)
+  }, [user])
 
   const handleLogout = useCallback(async () => {
     try {
@@ -141,6 +149,11 @@ export default function App() {
           setUploadedSources(
             Object.fromEntries(uploads.map(u => [u.id, { name: u.name, count: u.count }]))
           )
+          // If no static subjects (e.g. class-9 user), land on the first uploaded paper
+          if (!firstSubj) {
+            setSubject('uploaded')
+            setSource(uploads[0].id)
+          }
         }
       })
       .catch(console.error)
@@ -655,6 +668,35 @@ export default function App() {
           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">
             {user.role}
           </span>
+          {user.role !== 'Admin' && (
+            <div className="relative">
+              <button
+                onClick={() => setShowClassPicker(p => !p)}
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors
+                  ${user.class_grade
+                    ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                    : 'bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200'}`}
+              >
+                {user.class_grade ? `Class ${user.class_grade}` : 'Set class ▾'}
+              </button>
+              {showClassPicker && (
+                <div className="absolute left-0 top-full mt-1 z-50 bg-white border border-stone-200 rounded-lg shadow-md overflow-hidden">
+                  {(['9', '10'] as const).map(g => (
+                    <button
+                      key={g}
+                      onClick={() => handleUpdateClass(g)}
+                      className={`block w-full text-left px-4 py-2 text-xs font-medium transition-colors
+                        ${user.class_grade === g
+                          ? 'bg-indigo-50 text-indigo-700'
+                          : 'text-stone-700 hover:bg-stone-50'}`}
+                    >
+                      Class {g}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {view === 'builder' && (
             <button
               onClick={() => goTo('/')}
@@ -765,6 +807,7 @@ export default function App() {
           onAutoGenerate={() => setShowAutoGenerate(true)}
           canAutoGenerate={bankQuestions.length > 0}
           onClearPaper={() => setItems(() => [])}
+          onUploadBank={() => setShowDashboardUpload(true)}
           user={user}
         />
       </div>

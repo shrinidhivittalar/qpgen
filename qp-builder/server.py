@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, Response
 from flask_cors import CORS
 from pathlib import Path
 import google.generativeai as genai
@@ -27,7 +27,7 @@ users_col        = _db["users"]         # user accounts
 sessions_col     = _db["sessions"]      # user active sessions
 model_papers_col = _db["model_papers"]  # saved model paper structures
 
-def get_current_user_role():
+def get_current_user() -> dict | None:
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
@@ -35,7 +35,15 @@ def get_current_user_role():
     session = sessions_col.find_one({"token": token})
     if not session:
         return None
-    return session.get("role", "Viewer")
+    return {
+        "username":    session.get("username"),
+        "role":        session.get("role", "Viewer"),
+        "class_grade": session.get("class_grade"),   # "9", "10", or None (Admin)
+    }
+
+def get_current_user_role():
+    u = get_current_user()
+    return u["role"] if u else None
 
 def require_roles(*roles):
     def decorator(f):
@@ -143,10 +151,11 @@ Text:
 @app.post("/api/auth/signup")
 def auth_signup():
     data = request.get_json(force=True)
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
-    role = (data.get("role") or "Teacher").strip()
-    
+    username    = (data.get("username") or "").strip()
+    password    = data.get("password") or ""
+    role        = (data.get("role") or "Teacher").strip()
+    class_grade = (data.get("class_grade") or "").strip() or None  # "9", "10", or None
+
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
     if len(password) < 8:
@@ -155,27 +164,35 @@ def auth_signup():
         return jsonify({"error": "Password must contain both letters and numbers"}), 400
     if role not in ["Admin", "Teacher", "Viewer"]:
         return jsonify({"error": "Invalid role"}), 400
-        
+    if role != "Admin" and class_grade not in ("9", "10"):
+        return jsonify({"error": "Please select a class (9th or 10th)"}), 400
+
     if users_col.find_one({"username": username}):
         return jsonify({"error": "Username already exists"}), 400
-        
+
     hashed_password = generate_password_hash(password)
     users_col.insert_one({
-        "username": username,
-        "password": hashed_password,
-        "role": role,
-        "created_at": datetime.now(timezone.utc)
+        "username":    username,
+        "password":    hashed_password,
+        "role":        role,
+        "class_grade": class_grade,
+        "created_at":  datetime.now(timezone.utc),
     })
-    
+
     token = str(uuid.uuid4())
     sessions_col.insert_one({
-        "token": token,
-        "username": username,
-        "role": role,
-        "created_at": datetime.now(timezone.utc)
+        "token":       token,
+        "username":    username,
+        "role":        role,
+        "class_grade": class_grade,
+        "created_at":  datetime.now(timezone.utc),
     })
-    
-    return jsonify({"token": token, "user": {"username": username, "role": role}})
+
+    return jsonify({"token": token, "user": {
+        "username":    username,
+        "role":        role,
+        "class_grade": class_grade,
+    }})
 
 @app.post("/api/auth/login")
 def auth_login():
@@ -192,13 +209,18 @@ def auth_login():
         
     token = str(uuid.uuid4())
     sessions_col.insert_one({
-        "token": token,
-        "username": username,
-        "role": user.get("role", "Viewer"),
-        "created_at": datetime.now(timezone.utc)
+        "token":       token,
+        "username":    username,
+        "role":        user.get("role", "Viewer"),
+        "class_grade": user.get("class_grade"),
+        "created_at":  datetime.now(timezone.utc),
     })
-    
-    return jsonify({"token": token, "user": {"username": username, "role": user.get("role", "Viewer")}})
+
+    return jsonify({"token": token, "user": {
+        "username":    username,
+        "role":        user.get("role", "Viewer"),
+        "class_grade": user.get("class_grade"),
+    }})
 
 @app.get("/api/auth/me")
 def auth_me():
@@ -209,7 +231,32 @@ def auth_me():
     session = sessions_col.find_one({"token": token})
     if not session:
         return jsonify({"error": "Session expired or invalid"}), 401
-    return jsonify({"username": session["username"], "role": session.get("role", "Viewer")})
+    return jsonify({
+        "username":    session["username"],
+        "role":        session.get("role", "Viewer"),
+        "class_grade": session.get("class_grade"),
+    })
+
+@app.patch("/api/auth/me")
+def update_me():
+    """Allow the logged-in user to update their own class_grade."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    data        = request.get_json(force=True)
+    class_grade = (data.get("class_grade") or "").strip() or None
+    if class_grade not in ("9", "10", None):
+        return jsonify({"error": "class_grade must be '9' or '10'"}), 400
+    users_col.update_one(
+        {"username": user["username"]},
+        {"$set": {"class_grade": class_grade}},
+    )
+    # Update all active sessions for this user so the change is live immediately
+    sessions_col.update_many(
+        {"username": user["username"]},
+        {"$set": {"class_grade": class_grade}},
+    )
+    return jsonify({"username": user["username"], "role": user["role"], "class_grade": class_grade})
 
 @app.post("/api/auth/logout")
 def auth_logout():
@@ -224,8 +271,21 @@ def auth_logout():
 
 @app.get("/api/subjects")
 def get_subjects():
-    # Aggregate unique subject/source combos and their counts from questions collection
+    user        = get_current_user()
+    class_grade = user["class_grade"] if user else None
+    is_admin    = user and user["role"] == "Admin"
+
+    # Docs with no class_grade field were pushed manually and are class-10 content.
+    # Class-9 users must only see docs explicitly tagged class_grade="9".
+    if is_admin:
+        match = {}
+    elif class_grade == "9":
+        match = {"class_grade": "9"}
+    else:  # class 10 or unauthenticated — include untagged legacy data
+        match = {"$or": [{"class_grade": "10"}, {"class_grade": {"$exists": False}}, {"class_grade": None}]}
+
     pipeline = [
+        {"$match": match},
         {"$group": {
             "_id":   {"subject": "$subject", "source": "$source"},
             "count": {"$sum": 1},
@@ -239,11 +299,32 @@ def get_subjects():
     return jsonify(result)
 
 
+# ── Image proxy fallback (used when VITE_SUPABASE_IMAGES_URL is not embedded) ─
+
+@app.get("/api/images/<path:image_path>")
+def serve_image(image_path: str):
+    if not _supabase:
+        return jsonify({"error": "Image storage not configured"}), 503
+    try:
+        data = _supabase.storage.from_(SUPABASE_BUCKET).download(image_path)
+        ext  = image_path.rsplit(".", 1)[-1].lower() if "." in image_path else "png"
+        mime = _IMG_MIME.get(ext, "image/png")
+        return Response(data, mimetype=mime)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+
+
 # ── Uploaded papers list ──────────────────────────────────────────────────────
 
 @app.get("/api/uploads")
 def list_uploads():
-    docs = uploads_col.find({}, {"_id": 0, "upload_id": 1, "name": 1, "question_count": 1})
+    user = get_current_user()
+    # Admins see every uploaded paper.
+    # Non-admin users see papers that match their class OR were uploaded before class tagging (null).
+    query: dict = {}
+    if user and user["role"] != "Admin" and user["class_grade"]:
+        query["$or"] = [{"class_grade": user["class_grade"]}, {"class_grade": None}]
+    docs = uploads_col.find(query, {"_id": 0, "upload_id": 1, "name": 1, "question_count": 1})
     return jsonify([
         {"id": d["upload_id"], "name": d["name"], "count": d["question_count"]}
         for d in docs
@@ -285,6 +366,154 @@ FIGURE_HINT_RE = re.compile(
 CHUNK_SIZE    = 6000   # chars per Gemini call — smaller chunks → fewer questions per call → less output token pressure
 CHUNK_OVERLAP = 800    # overlap so questions at chunk boundaries always appear in at least one full chunk
 MAX_CHUNKS    = 45     # covers large textbook banks up to ~234 000 chars (~120+ pages)
+
+
+_LLAMAPARSE_BASE  = "https://api.cloud.llamaindex.ai"
+_LP_IMG_RE        = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+_Q_NUM_IN_MD_RE   = re.compile(r'(?:^|\n)\s*(?:Q\.?\s*)?(\d{1,3})[.)]\s')
+
+def _extract_text_llamaparse(
+    pdf_path: str,
+) -> tuple[str, dict[int, list[dict]]] | None:
+    """
+    Extract markdown + embedded figure images from a PDF via the LlamaParse cloud API.
+
+    Returns (clean_markdown, image_map) where:
+      clean_markdown — text with ![img](img) refs stripped, ready for Gemini
+      image_map      — {q_num: [{"data": bytes, "ext": str, "name": str}]}
+                       built by matching image refs in the markdown to the nearest
+                       preceding question-number pattern (e.g. "4." / "Q.4").
+
+    Returns None on total failure so the caller falls back to PyMuPDF for everything.
+    """
+    import time, requests as _req
+
+    api_key = os.getenv("LLAMAPARSE_API_KEY")
+    if not api_key:
+        print("[LlamaParse] LLAMAPARSE_API_KEY not set — using PyMuPDF fallback")
+        return None
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    # 1. Upload PDF
+    try:
+        with open(pdf_path, "rb") as fh:
+            upload_resp = _req.post(
+                f"{_LLAMAPARSE_BASE}/api/v1/parsing/upload",
+                headers=headers,
+                files={"file": (os.path.basename(pdf_path), fh, "application/pdf")},
+                data={"language": "en"},
+                timeout=60,
+            )
+        upload_resp.raise_for_status()
+    except Exception as exc:
+        print(f"[LlamaParse] upload failed: {exc} — using PyMuPDF fallback")
+        return None
+
+    job_id = upload_resp.json().get("id")
+    if not job_id:
+        print("[LlamaParse] no job_id in upload response — using PyMuPDF fallback")
+        return None
+
+    print(f"[LlamaParse] job_id={job_id}, polling…")
+
+    # 2. Poll until done (max ~90s)
+    for attempt in range(30):
+        time.sleep(3)
+        try:
+            status_resp = _req.get(
+                f"{_LLAMAPARSE_BASE}/api/v1/parsing/job/{job_id}",
+                headers=headers,
+                timeout=30,
+            )
+            status_resp.raise_for_status()
+            status = status_resp.json().get("status", "")
+        except Exception as exc:
+            print(f"[LlamaParse] poll error (attempt {attempt}): {exc}")
+            continue
+
+        print(f"[LlamaParse] attempt={attempt}  status={status!r}")
+        if status == "SUCCESS":
+            break
+        if status in ("ERROR", "CANCELLED"):
+            print(f"[LlamaParse] job failed status={status!r} — using PyMuPDF fallback")
+            return None
+    else:
+        print("[LlamaParse] timed out — using PyMuPDF fallback")
+        return None
+
+    # 3. Fetch markdown result
+    try:
+        result_resp = _req.get(
+            f"{_LLAMAPARSE_BASE}/api/v1/parsing/job/{job_id}/result/markdown",
+            headers=headers,
+            timeout=30,
+        )
+        result_resp.raise_for_status()
+        body = result_resp.json()
+        if "markdown" in body:
+            md = body["markdown"].strip()
+        else:
+            pages = body.get("pages", [])
+            md = "\n\n".join(p.get("md", "") for p in pages).strip()
+        print(f"[LlamaParse] extracted {len(md)} chars")
+        if not md:
+            return None
+    except Exception as exc:
+        print(f"[LlamaParse] result fetch failed: {exc} — using PyMuPDF fallback")
+        return None
+
+    # 4. Download any embedded figure images referenced inline in the markdown.
+    #    LlamaParse writes ![name](name) exactly where the figure appears in the PDF,
+    #    so we can map each image to a question by finding the nearest preceding
+    #    question-number pattern in the markdown.
+    img_refs = [(m.start(), m.group(2)) for m in _LP_IMG_RE.finditer(md)]
+    print(f"[LlamaParse] {len(img_refs)} image reference(s) in markdown")
+
+    image_map: dict[int, list[dict]] = {}
+
+    if img_refs:
+        q_positions = [
+            (m.start(), int(m.group(1)))
+            for m in _Q_NUM_IN_MD_RE.finditer(md)
+        ]
+
+        for ref_pos, img_name in img_refs:
+            # Last question whose start is at or before this image reference
+            assigned_q: int | None = None
+            for q_pos, q_num in q_positions:
+                if q_pos <= ref_pos:
+                    assigned_q = q_num
+                else:
+                    break
+            # If the image precedes every question, attach to the first question
+            if assigned_q is None and q_positions:
+                assigned_q = q_positions[0][1]
+
+            if assigned_q is None:
+                print(f"[LlamaParse] no question found for {img_name!r} — skipping")
+                continue
+
+            ext = img_name.rsplit('.', 1)[-1].lower() if '.' in img_name else 'png'
+            try:
+                img_resp = _req.get(
+                    f"{_LLAMAPARSE_BASE}/api/v1/parsing/job/{job_id}/result/image/{img_name}",
+                    headers=headers,
+                    timeout=30,
+                )
+                img_resp.raise_for_status()
+                image_map.setdefault(assigned_q, []).append({
+                    "data": img_resp.content,
+                    "ext":  ext,
+                    "name": img_name,
+                })
+                print(f"[LlamaParse] {img_name!r} ({len(img_resp.content)} B) → Q{assigned_q}")
+            except Exception as exc:
+                print(f"[LlamaParse] failed to download {img_name!r}: {exc}")
+
+    # 5. Strip image refs from the text before handing it to Gemini
+    clean_md = _LP_IMG_RE.sub('', md).strip()
+    return clean_md, image_map
 
 
 def _decode_unicode_escapes(s: str) -> str:
@@ -532,6 +761,29 @@ def _figure_region(page, img_top: float, img_bottom: float, text_ranges: list) -
     return fitz.Rect(pr.x0 + MARGIN_X, gap_top, pr.x1 - MARGIN_X, gap_bottom)
 
 
+MIN_VECTOR_FIG_H = 50   # pts — gaps shorter than this are section spacing, not figures
+
+
+def _has_vector_content(page, rect: fitz.Rect, min_strokes: int = 2) -> bool:
+    """
+    True if rect contains enough non-trivial vector STROKE paths to be a real figure.
+    Only type='s' (stroke/outline) paths are counted — type='f' fills are decorative
+    backgrounds and cover-page artwork that should never be treated as figures.
+    Thin rules (h or w ≤ 10pt) are also excluded.
+    """
+    try:
+        count = sum(
+            1 for d in page.get_drawings()
+            if d.get("type") == "s"
+            and fitz.Rect(d["rect"]).intersects(rect)
+            and fitz.Rect(d["rect"]).height > 10
+            and fitz.Rect(d["rect"]).width  > 10
+        )
+        return count >= min_strokes
+    except Exception:
+        return False
+
+
 def extract_layout_items(doc) -> list[dict]:
     """
     Return text and image items interleaved in reading order across all pages.
@@ -583,6 +835,37 @@ def extract_layout_items(doc) -> list[dict]:
                 })
             except Exception:
                 continue
+
+        # ── vector figure regions ─────────────────────────────────────────────
+        # Raster image detection above only finds embedded bitmaps.
+        # SSLC papers use vector PDF paths for circuits, geometry, ray diagrams.
+        # Strategy: find vertical gaps between prose text blocks; if a gap contains
+        # non-trivial drawing strokes, render it as a figure image.
+        pr = page.rect
+        prose_ys = [(y0, y1) for y0, y1, is_prose in text_ranges if is_prose]
+        prose_ys.append((pr.y1, pr.y1))   # sentinel so the last gap is also checked
+        prev_bottom = pr.y0
+        for seg_top, seg_bottom in prose_ys:
+            gap_top, gap_bottom = prev_bottom, seg_top
+            if gap_bottom - gap_top >= MIN_VECTOR_FIG_H:
+                clip = fitz.Rect(pr.x0 + MARGIN_X, gap_top, pr.x1 - MARGIN_X, gap_bottom)
+                key  = (round(clip.y0), round(clip.y1))
+                if key not in seen and _has_vector_content(page, clip):
+                    seen.add(key)
+                    try:
+                        pix = page.get_pixmap(clip=clip, dpi=FIGURE_DPI)
+                        page_blocks.append({
+                            "type": "image",
+                            "y":    gap_top,
+                            "data": pix.tobytes("png"),
+                            "ext":  "png",
+                            "w":    pix.width,
+                            "h":    pix.height,
+                        })
+                        print(f"[vector_fig] p{page.number} gap y={gap_top:.0f}–{gap_bottom:.0f} captured")
+                    except Exception:
+                        pass
+            prev_bottom = seg_bottom
 
         # ── table blocks ──────────────────────────────────────────────────────
         try:
@@ -785,15 +1068,22 @@ def upload_qp():
         layout_items = extract_layout_items(doc)
         n_pages      = doc.page_count
 
-        # Build full_text with sort=True for better math reading order (LLM input)
-        # Done before doc.close() since extract_layout_items now uses get_text("blocks")
-        full_text = "\n".join(
-            page.get_text("text", sort=True).strip()
-            for page in doc
-        )
+        # Try LlamaParse first — better text (math, reading order) AND embedded images.
+        lp_result       = _extract_text_llamaparse(tmp.name)
+        used_llamaparse = lp_result is not None
+        if used_llamaparse:
+            full_text, lp_image_map = lp_result
+        else:
+            lp_image_map = {}
+            full_text = "\n".join(
+                page.get_text("text", sort=True).strip()
+                for page in doc
+            )
         doc.close()
+
         avg_chars = len(full_text) / max(n_pages, 1)
-        print(f"[upload] pages={n_pages}  total_chars={len(full_text)}  avg_chars_per_page={avg_chars:.1f}")
+        print(f"[upload] extractor={'llamaparse' if used_llamaparse else 'pymupdf'}  pages={n_pages}  "
+              f"total_chars={len(full_text)}  avg_chars_per_page={avg_chars:.1f}")
 
         if avg_chars < 20:
             return jsonify({
@@ -813,8 +1103,15 @@ def upload_qp():
         # Generate upload_id at parse time so image paths are consistent at confirm time
         upload_id = uuid.uuid4().hex[:8]
 
-        # Assign images/tables to questions by layout position
-        image_map  = assign_images_to_questions(layout_items, raw_questions)
+        # Use LlamaParse images when available (inline position → exact q mapping).
+        # Fall back to PyMuPDF layout-based assignment only when LlamaParse found none.
+        if lp_image_map:
+            image_map = lp_image_map
+            lp_img_count = sum(len(v) for v in lp_image_map.values())
+            print(f"[upload] using LlamaParse images: {lp_img_count} image(s) across {len(lp_image_map)} question(s)")
+        else:
+            image_map = assign_images_to_questions(layout_items, raw_questions)
+
         table_map  = assign_tables_to_questions(layout_items, raw_questions)
         image_refs = upload_question_images(upload_id, image_map)
 
@@ -976,11 +1273,15 @@ def confirm_upload():
     if not questions:
         return jsonify({"error": "No valid questions to save"}), 422
 
+    uploader      = get_current_user()
+    upload_class  = uploader["class_grade"] if uploader else None
+
     uploads_col.insert_one({
         "upload_id":      upload_id,
         "name":           name,
         "question_count": len(questions),
         "questions":      questions,
+        "class_grade":    upload_class,
         "created_at":     datetime.now(timezone.utc),
     })
 
