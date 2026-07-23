@@ -1,14 +1,12 @@
 import type { BankQuestion, RawQuestion, UploadParseResult, ParsedModelPaper } from './types'
 
-const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
-
 async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
   const token = localStorage.getItem('token')
   const headers = new Headers(init?.headers)
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  return fetch(`${API_BASE}${url}`, { ...init, headers })
+  return fetch(url, { ...init, headers })
 }
 
 export interface User {
@@ -257,9 +255,9 @@ export async function generateQuestions(params: GenerateQuestionsParams): Promis
 
 export function imageUrl(subject: string, source: string, filename: string): string {
   if (subject === 'uploaded') {
-    return `${API_BASE}/api/images/uploaded/${source}/${filename}`
+    return `/api/images/uploaded/${source}/${filename}`
   }
   const base = import.meta.env.VITE_SUPABASE_IMAGES_URL
   if (base) return `${base}/${subject}/${source}/${filename}`
-  return `${API_BASE}/api/images/${subject}/${source}/${filename}`
+  return `/api/images/${subject}/${source}/${filename}`
 }
