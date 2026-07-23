@@ -3,7 +3,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  envDir: '..',   // read VITE_* vars from the root .env alongside server config
+  envDir: '..',
+  build: {
+    outDir: '../static',
+    emptyOutDir: true,
+  },
   server: {
     port: 5174,
     proxy: {
