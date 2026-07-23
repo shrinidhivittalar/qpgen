@@ -3,5 +3,5 @@ services:
     name: qp-builder
     runtime: python
     rootDir: qp-builder
-    buildCommand: pip install -r requirements.txt && cd frontend && npm install && npm run build
+    buildCommand: pip install -r requirements.txt && cd frontend && npm install && npm run build && mkdir -p ../static && cp -r dist/. ../static/
     startCommand: gunicorn --bind 0.0.0.0:$PORT server:app
