@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
-import { login } from '../api'
+import { login, type User } from '../api'
 
 interface Props {
-  onLoginSuccess: (token: string, user: { username: string; role: 'Admin' | 'Teacher' | 'Viewer' }) => void
+  onLoginSuccess: (token: string, user: User) => void
   onGoToSignup: () => void
 }
 
