@@ -1,12 +1,21 @@
 import type { BankQuestion, RawQuestion, UploadParseResult, ParsedModelPaper } from './types'
 
+// Registered by App on mount; called when any API request returns 401
+// so expired/invalidated sessions redirect to login automatically.
+let _on401: (() => void) | null = null
+export function setOn401Handler(cb: () => void) { _on401 = cb }
+
 async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
   const token = localStorage.getItem('token')
   const headers = new Headers(init?.headers)
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  return fetch(url, { ...init, headers })
+  const res = await fetch(url, { ...init, headers })
+  if (res.status === 401 && _on401) {
+    _on401()
+  }
+  return res
 }
 
 export interface User {

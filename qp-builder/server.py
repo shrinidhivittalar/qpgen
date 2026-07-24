@@ -4,7 +4,7 @@ from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import fitz  # PyMuPDF
 import json, os, re, uuid, tempfile
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -27,6 +27,14 @@ users_col        = _db["users"]         # user accounts
 sessions_col     = _db["sessions"]      # user active sessions
 model_papers_col = _db["model_papers"]  # saved model paper structures
 
+SESSION_TTL_DAYS = 30  # sessions expire after 30 days of inactivity
+
+# ── Ensure indexes exist (idempotent — safe to run on every startup) ──────────
+users_col.create_index("username", unique=True)
+sessions_col.create_index("token",      unique=True)
+sessions_col.create_index("username")                        # for update_many on class change
+sessions_col.create_index("expires_at", expireAfterSeconds=0)  # MongoDB auto-purges expired docs
+
 def get_current_user() -> dict | None:
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -34,6 +42,11 @@ def get_current_user() -> dict | None:
     token = auth_header.split(" ")[1]
     session = sessions_col.find_one({"token": token})
     if not session:
+        return None
+    # Reject and purge expired sessions (belt-and-suspenders with the TTL index)
+    expires_at = session.get("expires_at")
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        sessions_col.delete_one({"token": token})
         return None
     return {
         "username":    session.get("username"),
@@ -52,8 +65,11 @@ def require_roles(*roles):
             # If no users exist, bypass authorization to allow bootstrap of first user
             if users_col.count_documents({}) == 0:
                 return f(*args, **kwargs)
-            user_role = get_current_user_role()
-            if not user_role or user_role not in roles:
+            user = get_current_user()
+            if not user:
+                # No token or token invalid/expired — 401 so the client can re-auth
+                return jsonify({"error": "Authentication required"}), 401
+            if user["role"] not in roles:
                 return jsonify({"error": "Forbidden: insufficient permissions"}), 403
             return f(*args, **kwargs)
         return wrapper
@@ -167,6 +183,12 @@ def auth_signup():
     if role != "Admin" and class_grade not in ("9", "10"):
         return jsonify({"error": "Please select a class (9th or 10th)"}), 400
 
+    # After bootstrap, only an existing Admin may create new Admin accounts.
+    if role == "Admin" and users_col.count_documents({}) > 0:
+        caller = get_current_user()
+        if not caller or caller["role"] != "Admin":
+            return jsonify({"error": "Only an Admin can create Admin accounts"}), 403
+
     if users_col.find_one({"username": username}):
         return jsonify({"error": "Username already exists"}), 400
 
@@ -179,13 +201,15 @@ def auth_signup():
         "created_at":  datetime.now(timezone.utc),
     })
 
-    token = str(uuid.uuid4())
+    token      = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS)
     sessions_col.insert_one({
         "token":       token,
         "username":    username,
         "role":        role,
         "class_grade": class_grade,
         "created_at":  datetime.now(timezone.utc),
+        "expires_at":  expires_at,
     })
 
     return jsonify({"token": token, "user": {
@@ -199,21 +223,23 @@ def auth_login():
     data = request.get_json(force=True)
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    
+
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
-        
+
     user = users_col.find_one({"username": username})
     if not user or not check_password_hash(user["password"], password):
         return jsonify({"error": "Invalid username or password"}), 401
-        
-    token = str(uuid.uuid4())
+
+    token      = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS)
     sessions_col.insert_one({
         "token":       token,
         "username":    username,
         "role":        user.get("role", "Viewer"),
         "class_grade": user.get("class_grade"),
         "created_at":  datetime.now(timezone.utc),
+        "expires_at":  expires_at,
     })
 
     return jsonify({"token": token, "user": {
@@ -267,22 +293,45 @@ def auth_logout():
     return jsonify({"ok": True})
 
 
+# ── Class-grade scope filter (single source of truth) ─────────────────────────
+
+def _class_filter(user: dict | None) -> dict:
+    """
+    Returns a MongoDB filter that scopes any collection to the caller's class.
+
+    - Admin          → {} (no filter — sees everything)
+    - class_grade 9  → {"class_grade": "9"}  (only explicitly-tagged class-9 docs)
+    - class_grade 10 → class-10 + docs with no/null tag (legacy untagged content
+                       was pushed before tagging existed and is all SSLC 10th)
+    - anything else  → same as class-10 (safe default for unauthenticated callers
+                       that somehow reach here before require_roles fires)
+
+    Untagged / null documents are treated as class-10 content everywhere —
+    for static question banks AND for uploaded banks.  This means:
+      • A class-9 user never sees 10th-class or Admin-uploaded content.
+      • An Admin-uploaded bank (null class_grade) is visible to class-10 users,
+        since all content in the system is SSLC 10th.
+    """
+    if not user or user["role"] == "Admin":
+        return {}
+    if user.get("class_grade") == "9":
+        return {"class_grade": "9"}
+    return {
+        "$or": [
+            {"class_grade": "10"},
+            {"class_grade": {"$exists": False}},
+            {"class_grade": None},
+        ]
+    }
+
+
 # ── Subjects ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/subjects")
+@require_roles("Admin", "Teacher", "Viewer")
 def get_subjects():
-    user        = get_current_user()
-    class_grade = user["class_grade"] if user else None
-    is_admin    = user and user["role"] == "Admin"
-
-    # Docs with no class_grade field were pushed manually and are class-10 content.
-    # Class-9 users must only see docs explicitly tagged class_grade="9".
-    if is_admin:
-        match = {}
-    elif class_grade == "9":
-        match = {"class_grade": "9"}
-    else:  # class 10 or unauthenticated — include untagged legacy data
-        match = {"$or": [{"class_grade": "10"}, {"class_grade": {"$exists": False}}, {"class_grade": None}]}
+    user  = get_current_user()
+    match = _class_filter(user)
 
     pipeline = [
         {"$match": match},
@@ -317,14 +366,11 @@ def serve_image(image_path: str):
 # ── Uploaded papers list ──────────────────────────────────────────────────────
 
 @app.get("/api/uploads")
+@require_roles("Admin", "Teacher", "Viewer")
 def list_uploads():
-    user = get_current_user()
-    # Admins see every uploaded paper.
-    # Non-admin users see papers that match their class OR were uploaded before class tagging (null).
-    query: dict = {}
-    if user and user["role"] != "Admin" and user["class_grade"]:
-        query["$or"] = [{"class_grade": user["class_grade"]}, {"class_grade": None}]
-    docs = uploads_col.find(query, {"_id": 0, "upload_id": 1, "name": 1, "question_count": 1})
+    user  = get_current_user()
+    query = _class_filter(user)
+    docs  = uploads_col.find(query, {"_id": 0, "upload_id": 1, "name": 1, "question_count": 1})
     return jsonify([
         {"id": d["upload_id"], "name": d["name"], "count": d["question_count"]}
         for d in docs
@@ -347,12 +393,20 @@ def rename_upload(upload_id):
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/questions/<subject>/<source>")
+@require_roles("Admin", "Teacher", "Viewer")
 def get_questions(subject, source):
+    user = get_current_user()
+    cls  = _class_filter(user)
+
     if subject == "uploaded":
-        doc = uploads_col.find_one({"upload_id": source}, {"_id": 0, "questions": 1})
+        # Same class scope as list_uploads — class-9 users cannot load a class-10 upload
+        # even if they somehow know the upload_id.
+        doc = uploads_col.find_one({"upload_id": source, **cls}, {"_id": 0, "questions": 1})
         return jsonify(doc["questions"] if doc else [])
 
-    qs = list(qs_col.find({"subject": subject, "source": source}, {"_id": 0}))
+    # Static question bank: merge class scope with subject/source filter.
+    # MongoDB allows top-level $or alongside sibling keys (implicit $and).
+    qs = list(qs_col.find({"subject": subject, "source": source, **cls}, {"_id": 0}))
     return jsonify(qs)
 
 
@@ -1401,6 +1455,7 @@ REPHRASE_PROMPTS = {
 
 
 @app.post("/api/rephrase")
+@require_roles("Admin", "Teacher")
 def rephrase():
     data  = request.get_json(force=True)
     text  = (data.get("text")  or "").strip()
@@ -1524,6 +1579,7 @@ def _blueprint_from_table(doc) -> list[dict] | None:
 
 
 @app.post("/api/parse-blueprint")
+@require_roles("Admin", "Teacher")
 def parse_blueprint():
     f = request.files.get("file")
     if not f or not f.filename.lower().endswith(".pdf"):
@@ -1615,6 +1671,7 @@ Rules:
 
 
 @app.post("/api/parse-model-paper")
+@require_roles("Admin", "Teacher")
 def parse_model_paper():
     f = request.files.get("file")
     if not f or not f.filename.lower().endswith(".pdf"):
@@ -1648,6 +1705,7 @@ def parse_model_paper():
 
 
 @app.get("/api/model-paper/<subject>")
+@require_roles("Admin", "Teacher", "Viewer")
 def get_model_paper(subject):
     doc = model_papers_col.find_one({"subject": subject}, {"_id": 0})
     if not doc:
@@ -1656,6 +1714,7 @@ def get_model_paper(subject):
 
 
 @app.put("/api/model-paper/<subject>")
+@require_roles("Admin", "Teacher")
 def save_model_paper(subject):
     data = request.get_json(force=True)
     model_papers_col.replace_one(
@@ -1667,6 +1726,7 @@ def save_model_paper(subject):
 
 
 @app.delete("/api/model-paper/<subject>")
+@require_roles("Admin", "Teacher")
 def delete_model_paper_route(subject):
     model_papers_col.delete_one({"subject": subject})
     return jsonify({"ok": True})
@@ -1768,6 +1828,7 @@ def generate_questions_endpoint():
 # ── Chapter classifier ───────────────────────────────────────────────────────
 
 @app.post("/api/classify-questions")
+@require_roles("Admin", "Teacher", "Viewer")
 def classify_questions():
     """
     Given a list of {qid, text} and a list of chapter names,

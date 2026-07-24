@@ -16,6 +16,7 @@ interface Props {
   sourceLabels:      Record<string, string>
   added:             boolean
   locked:            boolean
+  readOnly:          boolean
   paperSimilarity:   number
   crossSimilarity:   { sim: number; src: string } | null
   onToggle:          () => void
@@ -24,7 +25,7 @@ interface Props {
 }
 
 export function BankCard({
-  question: q, subject, source, sourceLabels, added, locked,
+  question: q, subject, source, sourceLabels, added, locked, readOnly,
   paperSimilarity, crossSimilarity, onToggle,
   onDeleteQuestion, onEditQuestion,
 }: Props) {
@@ -259,22 +260,24 @@ export function BankCard({
           )}
         </div>
 
-        {/* Add / Remove button */}
-        <button
-          onClick={onToggle}
-          disabled={locked && !added}
-          title={locked ? 'Paper locked to another subject' : added ? 'Remove from paper' : 'Add to paper'}
-          className={`shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold
-                      transition focus:outline-none focus:ring-2 focus:ring-indigo-400
-            ${added
-              ? 'bg-indigo-600 text-white hover:bg-red-500'
-              : canAdd
-              ? 'bg-gray-100 text-gray-500 hover:bg-indigo-600 hover:text-white'
-              : 'bg-gray-100 text-gray-300 cursor-not-allowed'
-            }`}
-        >
-          {added ? '✓' : '+'}
-        </button>
+        {/* Add / Remove button — hidden for Viewer */}
+        {!readOnly && (
+          <button
+            onClick={onToggle}
+            disabled={locked && !added}
+            title={locked ? 'Paper locked to another subject' : added ? 'Remove from paper' : 'Add to paper'}
+            className={`shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold
+                        transition focus:outline-none focus:ring-2 focus:ring-indigo-400
+              ${added
+                ? 'bg-indigo-600 text-white hover:bg-red-500'
+                : canAdd
+                ? 'bg-gray-100 text-gray-500 hover:bg-indigo-600 hover:text-white'
+                : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+              }`}
+          >
+            {added ? '✓' : '+'}
+          </button>
+        )}
       </div>
     </li>
   )

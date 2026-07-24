@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion, getMe, logout, updateMyClass, User } from './api'
+import { fetchSubjects, fetchQuestions, fetchUploads, rephraseQuestion, uploadPaper, confirmUpload, renameUpload, deleteUpload, deleteQuestionSource, deleteBankQuestion, editBankQuestion, getMe, logout, updateMyClass, setOn401Handler, User } from './api'
 import { QuestionBank } from './components/QuestionBank'
 import { PaperBuilder } from './components/PaperBuilder'
 import { UploadReviewModal } from './components/UploadReviewModal'
@@ -57,6 +57,16 @@ export default function App() {
     setUser(null)
     goTo('/')
   }, [goTo])
+
+  // When the server returns 401 (expired/invalid session), silently log out
+  // so the user sees the login screen rather than cryptic API errors.
+  useEffect(() => {
+    setOn401Handler(() => {
+      localStorage.removeItem('token')
+      setToken(null)
+      setUser(null)
+    })
+  }, [])
 
   useEffect(() => {
     if (token) {
@@ -712,7 +722,7 @@ export default function App() {
               {paper.length} Qs · {totalMarks} Marks
             </span>
           )}
-          {view === 'builder' && (
+          {view === 'builder' && user.role !== 'Viewer' && (
             <button
               onClick={handleExport}
               disabled={paper.length === 0}

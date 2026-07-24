@@ -138,8 +138,9 @@ export function QuestionBank({
     sourceLabels[src] ?? STATIC_SOURCE_LABELS[src] ?? src
 
   // RBAC checks
+  const isViewer = user.role === 'Viewer'
   const canRename = isUploaded && (user.role === 'Admin' || user.role === 'Teacher')
-  const canDeleteSource = isUploaded 
+  const canDeleteSource = isUploaded
     ? (user.role === 'Admin' || user.role === 'Teacher')
     : (user.role === 'Admin') // static subjects delete-able by Admin only
 
@@ -346,11 +347,12 @@ export function QuestionBank({
                 sourceLabels={sourceLabels}
                 added={paperQids.has(`${subject}:${source}:${q.qid}`)}
                 locked={isLocked}
+                readOnly={isViewer}
                 paperSimilarity={similarityMap[q.qid] ?? 0}
                 crossSimilarity={crossSourceMap[q.qid] ?? null}
                 onToggle={() => onToggle(q)}
-                onDeleteQuestion={isUploaded && user.role !== 'Viewer' ? () => onDeleteBankQuestion(q.qid) : undefined}
-                onEditQuestion={isUploaded && user.role !== 'Viewer' ? (text, type) => onEditBankQuestion(q.qid, text, type) : undefined}
+                onDeleteQuestion={isUploaded && !isViewer ? () => onDeleteBankQuestion(q.qid) : undefined}
+                onEditQuestion={isUploaded && !isViewer ? (text, type) => onEditBankQuestion(q.qid, text, type) : undefined}
               />
             ))}
           </ul>
